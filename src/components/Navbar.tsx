@@ -32,6 +32,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   isAdminRoute,
 }) => {
   const { currentUser, userProfile, isAdmin, logout } = useAuth();
+  const isLoggedIn = Boolean(currentUser || userProfile);
 
   const getPlanBadge = () => {
     if (!userProfile) return null;
@@ -86,10 +87,10 @@ export const Navbar: React.FC<NavbarProps> = ({
                   : 'hover:text-slate-900 hover:bg-slate-100'
               }`}
             >
-              {currentUser ? 'Customer Portal' : 'Browse Products'}
+              Customer Portal
             </button>
 
-            {currentUser && (
+            {isLoggedIn && (
               <button
                 onClick={() => setCurrentTab('tasks')}
                 className={`px-3 py-2 rounded-lg transition-colors flex items-center gap-1.5 ${
@@ -136,7 +137,7 @@ export const Navbar: React.FC<NavbarProps> = ({
 
           {/* Right Action Controls */}
           <div className="flex items-center gap-2.5">
-            {currentUser && userProfile ? (
+            {isLoggedIn && userProfile ? (
               <>
                 {/* Active Plan Tag */}
                 <div className="hidden lg:block">

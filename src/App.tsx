@@ -39,6 +39,7 @@ import {
 
 function MainApp() {
   const { currentUser, userProfile, isAdmin } = useAuth();
+  const isCustomerLoggedIn = Boolean(currentUser || userProfile);
 
   // Navigation & Hash Router
   const [currentTab, setCurrentTab] = useState<'portal' | 'tasks' | 'admin'>('portal');
@@ -206,14 +207,18 @@ function MainApp() {
 
   // Handle product click
   const handleProductClick = (product: Product) => {
-    if (!currentUser) {
+    if (!isCustomerLoggedIn) {
       setAuthModalMessage(`Sign in to rate "${product.title?.slice(0, 40)}..." and earn ₹20 cash reward!`);
       setIsAuthModalOpen(true);
       return;
     }
 
     if (userProfile?.status === 'inactive') {
-      alert('Your reviewer account has been deactivated by the administrator. Please contact support.');
+      setRewardToast({
+        amount: 0,
+        title: 'Account Suspended: Your reviewer account is deactivated by the administrator.',
+      });
+      setTimeout(() => setRewardToast(null), 4000);
       return;
     }
 
@@ -446,7 +451,7 @@ function MainApp() {
           /* DEFAULT PUBLIC BROWSE PORTAL */
           <div>
             {/* LOGGED IN REVIEWER DASHBOARD OR PUBLIC HERO */}
-            {currentUser && userProfile ? (
+            {isCustomerLoggedIn && userProfile ? (
               <section className="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 text-white py-8 border-b border-indigo-900/40">
                 <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
                   <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
@@ -457,7 +462,7 @@ function MainApp() {
                           {userProfile.status === 'inactive' ? 'Account Suspended' : 'Active Verified Reviewer'}
                         </span>
                         <span className="text-xs text-slate-400 font-mono">
-                          ID: #{currentUser.uid.slice(0, 8)}
+                          ID: #{userProfile.id ? userProfile.id.slice(0, 8) : 'REVIEWER'}
                         </span>
                       </div>
                       
@@ -726,7 +731,7 @@ function MainApp() {
           <span>Home</span>
         </button>
 
-        {currentUser && (
+        {isCustomerLoggedIn && (
           <button
             onClick={() => setCurrentTab('tasks')}
             className={`flex flex-col items-center gap-0.5 text-[11px] font-bold ${
@@ -746,7 +751,7 @@ function MainApp() {
           <span>Plans</span>
         </button>
 
-        {currentUser && (
+        {isCustomerLoggedIn && (
           <button
             onClick={() => setIsWalletModalOpen(true)}
             className="flex flex-col items-center gap-0.5 text-[11px] font-bold text-emerald-600"

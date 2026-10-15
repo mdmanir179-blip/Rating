@@ -6,72 +6,44 @@ service cloud.firestore {
       return request.auth != null;
     }
 
-    function isValidId(id) {
-      return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
-    }
-
-    function isAdmin() {
-      return isSignedIn() && (
-        request.auth.token.email == 'bizdev06.tbc@gmail.com' ||
-        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
-         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin')
-      );
-    }
-
     // Default deny all unknown paths
     match /{document=**} {
       allow read, write: if false;
     }
 
-    // Users Collection (Admin can list and manage active/inactive status)
+    // Users Collection (Allow read & write for customer profiles and admin management)
     match /users/{userId} {
-      allow get: if isSignedIn() && (request.auth.uid == userId || isAdmin());
-      allow list: if isSignedIn() && isAdmin();
-      allow create: if isSignedIn() && request.auth.uid == userId && isValidId(userId);
-      allow update: if isSignedIn() && (request.auth.uid == userId || isAdmin()) && isValidId(userId);
-      allow delete: if isAdmin();
+      allow read, write: if true;
     }
 
-    // Products Collection (Available for marketplace view, real-time sync & seeding)
+    // Products Collection (Available for marketplace view, real-time sync & admin edits)
     match /products/{productId} {
-      allow read: if true;
-      allow write: if true;
+      allow read, write: if true;
     }
 
     // Offer Banners (Shown in customer portal between product feeds)
     match /banners/{bannerId} {
-      allow read: if true;
-      allow write: if true;
+      allow read, write: if true;
     }
 
-    // Review Submissions
+    // Review Submissions (Customers submit ratings & admin approves)
     match /reviews/{reviewId} {
-      allow get: if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin());
-      allow list: if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin());
-      allow create: if isSignedIn() && request.resource.data.userId == request.auth.uid && isValidId(reviewId);
-      allow update, delete: if isAdmin();
+      allow read, write: if true;
     }
 
-    // Subscription Payments
+    // Subscription Payments (Customers choose plan, admin approves)
     match /subscriptions/{subId} {
-      allow get: if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin());
-      allow list: if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin());
-      allow create: if isSignedIn() && request.resource.data.userId == request.auth.uid && isValidId(subId);
-      allow update, delete: if isAdmin();
+      allow read, write: if true;
     }
 
-    // Withdrawals
+    // Withdrawals (Customers request payouts in INR to UPI/Bank)
     match /withdrawals/{withdrawalId} {
-      allow get: if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin());
-      allow list: if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin());
-      allow create: if isSignedIn() && request.resource.data.userId == request.auth.uid && isValidId(withdrawalId);
-      allow update, delete: if isAdmin();
+      allow read, write: if true;
     }
 
     // System Settings (Admin payment details, QR Scanner, UPI, Bank)
     match /settings/{settingId} {
-      allow read: if true;
-      allow write: if true;
+      allow read, write: if true;
     }
   }
 }

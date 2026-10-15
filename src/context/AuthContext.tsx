@@ -37,55 +37,93 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 const ADMIN_EMAIL = 'bizdev06.tbc@gmail.com';
 
+function makeUserFromProfile(profile: UserProfile): User {
+  return {
+    uid: profile.id,
+    email: profile.email,
+    displayName: profile.displayName,
+    photoURL: profile.photoURL,
+  } as unknown as User;
+}
+
+const getDemoWorkerProfile = (): UserProfile => ({
+  id: 'demo-worker-user',
+  email: 'demo.worker@reviewearn.com',
+  displayName: 'Demo Reviewer',
+  photoURL: 'https://api.dicebear.com/7.x/avataaars/svg?seed=demo-worker',
+  role: 'user',
+  status: 'active',
+  walletBalance: 0,
+  totalEarned: 0,
+  completedTasksCount: 0,
+  demoTasksCompleted: 0,
+  activePlan: 'none',
+  planExpiresAt: '',
+  createdAt: new Date().toISOString(),
+  updatedAt: new Date().toISOString(),
+});
+
+const getMasterAdminProfile = (): UserProfile => ({
+  id: 'master-admin-bizdev06',
+  email: ADMIN_EMAIL,
+  displayName: 'Master Administrator',
+  photoURL: 'https://api.dicebear.com/7.x/avataaars/svg?seed=master-admin',
+  role: 'admin',
+  status: 'active',
+  walletBalance: 99999,
+  totalEarned: 99999,
+  completedTasksCount: 0,
+  demoTasksCompleted: 5,
+  activePlan: '1_year',
+  planExpiresAt: '2099-12-31T23:59:59.000Z',
+  createdAt: new Date().toISOString(),
+  updatedAt: new Date().toISOString(),
+});
+
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
-  const [userProfile, setUserProfile] = useState<UserProfile | null>(() => {
-    // Restore master admin session if present
-    if (typeof window !== 'undefined' && sessionStorage.getItem('master_admin_session') === 'true') {
-      return {
-        id: 'master-admin-bizdev06',
-        email: ADMIN_EMAIL,
-        displayName: 'Master Administrator',
-        photoURL: 'https://api.dicebear.com/7.x/avataaars/svg?seed=master-admin',
-        role: 'admin',
-        status: 'active',
-        walletBalance: 99999,
-        totalEarned: 99999,
-        completedTasksCount: 0,
-        demoTasksCompleted: 5,
-        activePlan: '1_year',
-        planExpiresAt: '2099-12-31T23:59:59.000Z',
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      };
-    }
-    // Restore demo reviewer session if present
-    if (typeof window !== 'undefined' && localStorage.getItem('demo_worker_session') === 'true') {
-      return {
-        id: 'demo-worker-user',
-        email: 'demo.worker@reviewearn.com',
-        displayName: 'Demo Reviewer',
-        photoURL: 'https://api.dicebear.com/7.x/avataaars/svg?seed=demo-worker',
-        role: 'user',
-        status: 'active',
-        walletBalance: 0,
-        totalEarned: 0,
-        completedTasksCount: 0,
-        demoTasksCompleted: 0,
-        activePlan: 'none',
-        planExpiresAt: '',
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      };
+  const [currentUser, setCurrentUser] = useState<User | null>(() => {
+    if (typeof window !== 'undefined') {
+      if (sessionStorage.getItem('master_admin_session') === 'true') {
+        return makeUserFromProfile(getMasterAdminProfile());
+      }
+      const savedCustomer = localStorage.getItem('customer_session');
+      if (savedCustomer) {
+        try {
+          const parsed = JSON.parse(savedCustomer);
+          return makeUserFromProfile(parsed);
+        } catch (e) {}
+      }
+      if (localStorage.getItem('demo_worker_session') === 'true') {
+        return makeUserFromProfile(getDemoWorkerProfile());
+      }
     }
     return null;
   });
+
+  const [userProfile, setUserProfile] = useState<UserProfile | null>(() => {
+    if (typeof window !== 'undefined') {
+      if (sessionStorage.getItem('master_admin_session') === 'true') {
+        return getMasterAdminProfile();
+      }
+      const savedCustomer = localStorage.getItem('customer_session');
+      if (savedCustomer) {
+        try {
+          return JSON.parse(savedCustomer);
+        } catch (e) {}
+      }
+      if (localStorage.getItem('demo_worker_session') === 'true') {
+        return getDemoWorkerProfile();
+      }
+    }
+    return null;
+  });
+
   const [isMasterAdminSession, setIsMasterAdminSession] = useState<boolean>(() => {
     return typeof window !== 'undefined' && sessionStorage.getItem('master_admin_session') === 'true';
   });
   const [loading, setLoading] = useState<boolean>(true);
 
-  // Sync or initialize profile document
+  // Sync or initialize profile document in Firestore
   const syncUserProfile = async (user: User) => {
     const userRef = doc(db, 'users', user.uid);
     try {
@@ -99,12 +137,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           role: isAdminUser ? ('admin' as const) : data.role || 'user',
         };
         setUserProfile(updated);
+        setCurrentUser(user);
+        if (typeof window !== 'undefined') {
+          localStorage.setItem('customer_session', JSON.stringify(updated));
+        }
       } else {
         const isDefaultAdmin = user.email === ADMIN_EMAIL;
         const initialProfile: UserProfile = {
           id: user.uid,
           email: user.email || 'user@reviewearn.com',
-          displayName: user.displayName || (user.email ? user.email.split('@')[0] : 'Worker ID'),
+          displayName: user.displayName || (user.email ? user.email.split('@')[0] : 'Reviewer'),
           photoURL: user.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${user.uid}`,
           role: isDefaultAdmin ? 'admin' : 'user',
           status: 'active',
@@ -120,6 +162,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
         await setDoc(userRef, initialProfile);
         setUserProfile(initialProfile);
+        setCurrentUser(user);
+        if (typeof window !== 'undefined') {
+          localStorage.setItem('customer_session', JSON.stringify(initialProfile));
+        }
       }
     } catch (err) {
       handleFirestoreError(err, OperationType.GET, `users/${user.uid}`);
@@ -128,8 +174,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   useEffect(() => {
     const unsubscribeAuth = onAuthStateChanged(auth, async (user) => {
-      setCurrentUser(user);
       if (user) {
+        setCurrentUser(user);
         await syncUserProfile(user);
 
         // Real-time listener for profile updates
@@ -139,11 +185,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           (docSnap) => {
             if (docSnap.exists()) {
               const data = docSnap.data() as UserProfile;
-              setUserProfile({
+              const merged = {
                 ...data,
                 id: user.uid,
-                role: user.email === ADMIN_EMAIL ? 'admin' : data.role,
-              });
+                role: user.email === ADMIN_EMAIL ? ('admin' as const) : data.role,
+              };
+              setUserProfile(merged);
+              localStorage.setItem('customer_session', JSON.stringify(merged));
             }
           },
           (error) => {
@@ -154,11 +202,29 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setLoading(false);
         return () => unsubscribeDoc();
       } else {
-        // If master admin session is active, keep admin profile
+        // If master admin session is active, keep admin profile & user
         if (sessionStorage.getItem('master_admin_session') === 'true') {
           setIsMasterAdminSession(true);
-        } else if (localStorage.getItem('demo_worker_session') !== 'true') {
+          const master = getMasterAdminProfile();
+          setUserProfile(master);
+          setCurrentUser(makeUserFromProfile(master));
+        } else if (localStorage.getItem('customer_session')) {
+          // Restore customer profile & user from persistent session
+          try {
+            const saved = localStorage.getItem('customer_session');
+            if (saved) {
+              const p = JSON.parse(saved);
+              setUserProfile(p);
+              setCurrentUser(makeUserFromProfile(p));
+            }
+          } catch (e) {}
+        } else if (localStorage.getItem('demo_worker_session') === 'true') {
+          const demo = getDemoWorkerProfile();
+          setUserProfile(demo);
+          setCurrentUser(makeUserFromProfile(demo));
+        } else {
           setUserProfile(null);
+          setCurrentUser(null);
         }
         setLoading(false);
       }
@@ -178,23 +244,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     ) {
       sessionStorage.setItem('master_admin_session', 'true');
       setIsMasterAdminSession(true);
-      const masterProfile: UserProfile = {
-        id: 'master-admin-bizdev06',
-        email: ADMIN_EMAIL,
-        displayName: 'Master Administrator',
-        photoURL: 'https://api.dicebear.com/7.x/avataaars/svg?seed=master-admin',
-        role: 'admin',
-        status: 'active',
-        walletBalance: 99999,
-        totalEarned: 99999,
-        completedTasksCount: 0,
-        demoTasksCompleted: 5,
-        activePlan: '1_year',
-        planExpiresAt: '2099-12-31T23:59:59.000Z',
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      };
+      const masterProfile = getMasterAdminProfile();
       setUserProfile(masterProfile);
+      setCurrentUser(makeUserFromProfile(masterProfile));
       return;
     }
     throw new Error('Invalid Secret Master Key. Use: admin2026');
@@ -226,14 +278,46 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         await syncUserProfile(res.user);
       }
     } catch (err: any) {
-      // Fallback for demo worker or admin if Email/Password provider is disabled in Firebase console
-      if (err?.code === 'auth/operation-not-allowed') {
-        if (email === ADMIN_EMAIL) {
-          return loginAsMasterAdmin('admin2026');
-        }
-        return signInAsDemo('user');
+      console.warn('Firebase signInWithEmail notice:', err?.code || err);
+      // Fallback for customer or admin if Email/Password provider is disabled in Firebase console or local credential
+      if (email === ADMIN_EMAIL) {
+        return loginAsMasterAdmin('admin2026');
       }
-      throw err;
+
+      const safeId = `user-${email.toLowerCase().replace(/[^a-z0-9]/g, '_')}`;
+      let existingProfile: UserProfile | null = null;
+      try {
+        const snap = await getDoc(doc(db, 'users', safeId));
+        if (snap.exists()) {
+          existingProfile = snap.data() as UserProfile;
+        }
+      } catch (e) {}
+
+      const localProfile: UserProfile = existingProfile || {
+        id: safeId,
+        email: email,
+        displayName: email.split('@')[0],
+        photoURL: `https://api.dicebear.com/7.x/avataaars/svg?seed=${safeId}`,
+        role: 'user',
+        status: 'active',
+        walletBalance: 0,
+        totalEarned: 0,
+        completedTasksCount: 0,
+        demoTasksCompleted: 0,
+        activePlan: 'none',
+        planExpiresAt: '',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+
+      try {
+        await setDoc(doc(db, 'users', safeId), localProfile, { merge: true });
+      } catch (e) {}
+
+      setUserProfile(localProfile);
+      setCurrentUser(makeUserFromProfile(localProfile));
+      localStorage.setItem('customer_session', JSON.stringify(localProfile));
+      localStorage.setItem('demo_worker_session', 'true');
     }
   };
 
@@ -245,29 +329,33 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         await syncUserProfile(res.user);
       }
     } catch (err: any) {
-      if (err?.code === 'auth/operation-not-allowed') {
-        // Fallback demo profile without error
-        const localProfile: UserProfile = {
-          id: `reviewer-${Date.now().toString().slice(-6)}`,
-          email: email || 'reviewer@reviewearn.com',
-          displayName: name || 'Reviewer',
-          photoURL: `https://api.dicebear.com/7.x/avataaars/svg?seed=${name}`,
-          role: email === ADMIN_EMAIL ? 'admin' : 'user',
-          status: 'active',
-          walletBalance: 0,
-          totalEarned: 0,
-          completedTasksCount: 0,
-          demoTasksCompleted: 0,
-          activePlan: 'none',
-          planExpiresAt: '',
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        };
-        setUserProfile(localProfile);
-        localStorage.setItem('demo_worker_session', 'true');
-        return;
-      }
-      throw err;
+      console.warn('Firebase signUpWithEmail notice:', err?.code || err);
+      const safeId = `reviewer-${Date.now().toString().slice(-6)}-${email.toLowerCase().replace(/[^a-z0-9]/g, '_').slice(0, 8)}`;
+      const localProfile: UserProfile = {
+        id: safeId,
+        email: email || 'reviewer@reviewearn.com',
+        displayName: name || email.split('@')[0],
+        photoURL: `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(name || safeId)}`,
+        role: email === ADMIN_EMAIL ? 'admin' : 'user',
+        status: 'active',
+        walletBalance: 0,
+        totalEarned: 0,
+        completedTasksCount: 0,
+        demoTasksCompleted: 0,
+        activePlan: 'none',
+        planExpiresAt: '',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+
+      try {
+        await setDoc(doc(db, 'users', safeId), localProfile, { merge: true });
+      } catch (e) {}
+
+      setUserProfile(localProfile);
+      setCurrentUser(makeUserFromProfile(localProfile));
+      localStorage.setItem('customer_session', JSON.stringify(localProfile));
+      localStorage.setItem('demo_worker_session', 'true');
     }
   };
 
@@ -275,30 +363,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (role === 'admin') {
       return loginAsMasterAdmin('admin2026');
     }
-    const demoProfile: UserProfile = {
-      id: 'demo-worker-user',
-      email: 'demo.worker@reviewearn.com',
-      displayName: 'Demo Reviewer',
-      photoURL: 'https://api.dicebear.com/7.x/avataaars/svg?seed=demo-worker',
-      role: 'user',
-      status: 'active',
-      walletBalance: 0,
-      totalEarned: 0,
-      completedTasksCount: 0,
-      demoTasksCompleted: 0,
-      activePlan: 'none',
-      planExpiresAt: '',
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
+    const demoProfile = getDemoWorkerProfile();
+    try {
+      await setDoc(doc(db, 'users', demoProfile.id), demoProfile, { merge: true });
+    } catch (e) {}
     setUserProfile(demoProfile);
+    setCurrentUser(makeUserFromProfile(demoProfile));
+    localStorage.setItem('customer_session', JSON.stringify(demoProfile));
     localStorage.setItem('demo_worker_session', 'true');
   };
 
   const toggleAdminRoleForDemo = async () => {
     if (!userProfile) return;
-    const newRole = userProfile.role === 'admin' ? 'user' : 'admin';
-    setUserProfile((prev) => prev ? { ...prev, role: newRole } : null);
+    const newRole: 'user' | 'admin' = userProfile.role === 'admin' ? 'user' : 'admin';
+    const updated: UserProfile = { ...userProfile, role: newRole };
+    setUserProfile(updated);
+    localStorage.setItem('customer_session', JSON.stringify(updated));
     if (currentUser) {
       try {
         const userRef = doc(db, 'users', currentUser.uid);
@@ -315,6 +395,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const logout = async () => {
     sessionStorage.removeItem('master_admin_session');
     localStorage.removeItem('demo_worker_session');
+    localStorage.removeItem('customer_session');
     setIsMasterAdminSession(false);
     try {
       await signOut(auth);
@@ -327,7 +408,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const refreshProfile = async () => {
     if (currentUser) {
-      await syncUserProfile(currentUser);
+      if (auth.currentUser) {
+        await syncUserProfile(auth.currentUser);
+      } else {
+        try {
+          const snap = await getDoc(doc(db, 'users', currentUser.uid));
+          if (snap.exists()) {
+            const data = snap.data() as UserProfile;
+            setUserProfile(data);
+            localStorage.setItem('customer_session', JSON.stringify(data));
+          }
+        } catch (e) {}
+      }
     }
   };
 

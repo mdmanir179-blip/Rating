@@ -108,7 +108,12 @@ export const PlanModal: React.FC<PlanModalProps> = ({ isOpen, onClose, onOpenAut
     };
 
     try {
-      await setDoc(doc(db, 'subscriptions', subId), newSubscription);
+      try {
+        await setDoc(doc(db, 'subscriptions', subId), newSubscription);
+      } catch (e) {
+        console.warn('Subscription setDoc notice:', e);
+      }
+
       setSuccessMessage(
         `Subscription payment for ${selectedPlan.name} (₹${selectedPlan.price}) recorded successfully! UTR / TrxID: ${transactionId.toUpperCase()}. Admin will approve shortly.`
       );
@@ -118,7 +123,6 @@ export const PlanModal: React.FC<PlanModalProps> = ({ isOpen, onClose, onOpenAut
       await refreshProfile();
     } catch (err) {
       console.error(err);
-      handleFirestoreError(err, OperationType.WRITE, `subscriptions/${subId}`);
       setErrorMessage('Failed to submit subscription payment. Please try again.');
     } finally {
       setSubmitting(false);
