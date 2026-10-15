@@ -318,7 +318,7 @@ function MainApp() {
 
   // If user navigated to #admin
   if (isAdminRoute) {
-    if (!currentUser || !isAdmin) {
+    if (!isAdmin) {
       return (
         <SecretAdminLogin
           onSuccess={() => {
