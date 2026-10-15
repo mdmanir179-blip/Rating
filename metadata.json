@@ -1,0 +1,8 @@
+{
+  "name": "ReviewEarn India - Product Rating & Rewards Portal",
+  "description": "Multi-platform product rating and review rewards system for Amazon India, Flipkart, Meesho, Blinkit, Instamart, and Zepto with INR (₹) wallet payouts and membership plans.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

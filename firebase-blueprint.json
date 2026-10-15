@@ -1,0 +1,166 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "User account profile and wallet statistics in INR with active/inactive status",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string", "maxLength": 100 },
+        "displayName": { "type": "string", "maxLength": 100 },
+        "photoURL": { "type": "string", "maxLength": 500 },
+        "role": { "type": "string", "enum": ["user", "admin"] },
+        "status": { "type": "string", "enum": ["active", "inactive"] },
+        "walletBalance": { "type": "number" },
+        "totalEarned": { "type": "number" },
+        "completedTasksCount": { "type": "number" },
+        "demoTasksCompleted": { "type": "number" },
+        "activePlan": { "type": "string", "maxLength": 50 },
+        "planExpiresAt": { "type": "string", "maxLength": 50 },
+        "createdAt": { "type": "string", "maxLength": 50 },
+        "updatedAt": { "type": "string", "maxLength": 50 }
+      },
+      "required": ["email", "displayName", "role", "walletBalance", "totalEarned", "completedTasksCount", "demoTasksCompleted", "activePlan"]
+    },
+    "Product": {
+      "title": "Product",
+      "description": "Marketplace products available for rating and reviews with image and video support",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string", "maxLength": 200 },
+        "platform": { "type": "string", "enum": ["amazon", "flipkart", "meesho", "blinkit", "instamart", "zepto"] },
+        "category": { "type": "string", "maxLength": 100 },
+        "originalPrice": { "type": "number" },
+        "rewardAmount": { "type": "number" },
+        "imageUrl": { "type": "string", "maxLength": 2000000 },
+        "videoUrl": { "type": "string", "maxLength": 2000000 },
+        "description": { "type": "string", "maxLength": 2000 },
+        "rating": { "type": "number" },
+        "totalReviews": { "type": "number" },
+        "inStock": { "type": "boolean" },
+        "createdAt": { "type": "string", "maxLength": 50 }
+      },
+      "required": ["title", "platform", "category", "originalPrice", "rewardAmount", "imageUrl", "description", "rating", "totalReviews"]
+    },
+    "OfferBanner": {
+      "title": "OfferBanner",
+      "description": "Special promotion and incentive banners displayed in customer product feed",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string", "maxLength": 200 },
+        "subtitle": { "type": "string", "maxLength": 300 },
+        "badge": { "type": "string", "maxLength": 50 },
+        "imageUrl": { "type": "string", "maxLength": 2000000 },
+        "ctaText": { "type": "string", "maxLength": 50 },
+        "targetAction": { "type": "string", "maxLength": 50 },
+        "active": { "type": "boolean" },
+        "createdAt": { "type": "string", "maxLength": 50 }
+      },
+      "required": ["title", "subtitle", "badge", "ctaText", "active"]
+    },
+    "ReviewSubmission": {
+      "title": "ReviewSubmission",
+      "description": "Submitted rating and review by user with verified 20 INR reward",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "maxLength": 128 },
+        "userEmail": { "type": "string", "maxLength": 100 },
+        "productId": { "type": "string", "maxLength": 128 },
+        "productTitle": { "type": "string", "maxLength": 200 },
+        "platform": { "type": "string", "maxLength": 50 },
+        "rating": { "type": "number" },
+        "reviewText": { "type": "string", "maxLength": 2000 },
+        "qualityRating": { "type": "number" },
+        "deliveryRating": { "type": "number" },
+        "rewardEarned": { "type": "number" },
+        "status": { "type": "string", "enum": ["approved", "pending"] },
+        "createdAt": { "type": "string", "maxLength": 50 }
+      },
+      "required": ["userId", "productId", "productTitle", "platform", "rating", "reviewText", "rewardEarned", "status"]
+    },
+    "SubscriptionPayment": {
+      "title": "SubscriptionPayment",
+      "description": "User subscription fee payment submission awaiting admin approval",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "maxLength": 128 },
+        "userEmail": { "type": "string", "maxLength": 100 },
+        "planId": { "type": "string", "maxLength": 50 },
+        "planName": { "type": "string", "maxLength": 100 },
+        "planDurationDays": { "type": "number" },
+        "amount": { "type": "number" },
+        "paymentMethod": { "type": "string", "enum": ["upi", "gpay", "phonepe", "paytm", "bank_transfer", "qr_scanner"] },
+        "transactionId": { "type": "string", "maxLength": 100 },
+        "senderAccountOrPhone": { "type": "string", "maxLength": 100 },
+        "notes": { "type": "string", "maxLength": 500 },
+        "status": { "type": "string", "enum": ["pending", "approved", "rejected"] },
+        "createdAt": { "type": "string", "maxLength": 50 },
+        "approvedAt": { "type": "string", "maxLength": 50 }
+      },
+      "required": ["userId", "userEmail", "planId", "planName", "planDurationDays", "amount", "paymentMethod", "transactionId", "status"]
+    },
+    "WithdrawalRequest": {
+      "title": "WithdrawalRequest",
+      "description": "User wallet cashout request in INR",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "maxLength": 128 },
+        "userEmail": { "type": "string", "maxLength": 100 },
+        "amount": { "type": "number" },
+        "method": { "type": "string", "enum": ["upi", "phonepe", "gpay", "paytm", "bank_transfer", "imps"] },
+        "accountDetails": { "type": "string", "maxLength": 200 },
+        "status": { "type": "string", "enum": ["pending", "completed", "rejected"] },
+        "createdAt": { "type": "string", "maxLength": 50 }
+      },
+      "required": ["userId", "userEmail", "amount", "method", "accountDetails", "status"]
+    },
+    "AdminSettings": {
+      "title": "AdminSettings",
+      "description": "Platform payment channels, UPI QR code, PhonePe/GPay and Bank details in INR",
+      "type": "object",
+      "properties": {
+        "qrCodeUrl": { "type": "string", "maxLength": 2000000 },
+        "upiId": { "type": "string", "maxLength": 100 },
+        "phonePeNumber": { "type": "string", "maxLength": 100 },
+        "gPayNumber": { "type": "string", "maxLength": 100 },
+        "paytmNumber": { "type": "string", "maxLength": 100 },
+        "bankName": { "type": "string", "maxLength": 100 },
+        "bankAccountNo": { "type": "string", "maxLength": 100 },
+        "bankIfsc": { "type": "string", "maxLength": 100 },
+        "accountHolderName": { "type": "string", "maxLength": 100 },
+        "instructions": { "type": "string", "maxLength": 2000 },
+        "updatedAt": { "type": "string", "maxLength": 50 }
+      },
+      "required": ["upiId", "phonePeNumber"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "User profiles with wallet balance, active/inactive state, and active plan state"
+    },
+    "/products/{productId}": {
+      "schema": { "$ref": "#/entities/Product" },
+      "description": "Marketplace products catalogue across Amazon, Flipkart, Meesho, Blinkit, Instamart, Zepto with media"
+    },
+    "/banners/{bannerId}": {
+      "schema": { "$ref": "#/entities/OfferBanner" },
+      "description": "Promotional banners shown between product cards"
+    },
+    "/reviews/{reviewId}": {
+      "schema": { "$ref": "#/entities/ReviewSubmission" },
+      "description": "Ratings and reviews submitted by workers"
+    },
+    "/subscriptions/{subId}": {
+      "schema": { "$ref": "#/entities/SubscriptionPayment" },
+      "description": "Subscription payments submitted by users for admin approval"
+    },
+    "/withdrawals/{withdrawalId}": {
+      "schema": { "$ref": "#/entities/WithdrawalRequest" },
+      "description": "User wallet payout requests"
+    },
+    "/settings/{settingId}": {
+      "schema": { "$ref": "#/entities/AdminSettings" },
+      "description": "System admin settings including payment methods and scanner"
+    }
+  }
+}
