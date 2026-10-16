@@ -27,6 +27,8 @@ interface AuthContextType {
   signInWithGoogle: () => Promise<void>;
   signInWithEmail: (email: string, pass: string) => Promise<void>;
   signUpWithEmail: (email: string, pass: string, name: string) => Promise<void>;
+  signInWithManualCredentials: (identifier: string, pass: string) => Promise<void>;
+  signUpWithManualCredentials: (name: string, identifier: string, pass: string) => Promise<void>;
   signInAsDemo: (role?: 'user' | 'admin') => Promise<void>;
   toggleAdminRoleForDemo: () => Promise<void>;
   logout: () => Promise<void>;
@@ -268,95 +270,202 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  const signInWithEmail = async (email: string, pass: string) => {
-    if (email === ADMIN_EMAIL && (pass === 'admin2026' || pass === 'Password123!')) {
+  const normalizeIdentifier = (raw: string) => {
+    const trimmed = raw.trim();
+    if (trimmed.includes('@')) {
+      const cleanEmail = trimmed.toLowerCase();
+      return {
+        email: cleanEmail,
+        phone: '',
+        isPhone: false,
+        cleanId: cleanEmail.replace(/[^a-z0-9]/g, '_'),
+      };
+    }
+    const digits = trimmed.replace(/[^0-9]/g, '');
+    return {
+      email: `${digits}@reviewearn.in`,
+      phone: digits,
+      isPhone: true,
+      cleanId: `tel_${digits}`,
+    };
+  };
+
+  const signInWithManualCredentials = async (rawIdentifier: string, pass: string) => {
+    const trimmedId = rawIdentifier.trim();
+    const cleanPass = pass.trim();
+
+    if (!trimmedId) {
+      throw new Error('Please enter your Email Address or Mobile Number.');
+    }
+    if (!cleanPass) {
+      throw new Error('Please enter your password.');
+    }
+
+    if (trimmedId === ADMIN_EMAIL && (cleanPass === 'admin2026' || cleanPass === 'Password123!')) {
       return loginAsMasterAdmin('admin2026');
     }
+
+    const { email, phone, isPhone, cleanId } = normalizeIdentifier(trimmedId);
+    if (isPhone && phone.length < 10) {
+      throw new Error('Please enter a valid 10-digit mobile number.');
+    }
+    if (!isPhone && (!email.includes('@') || !email.includes('.'))) {
+      throw new Error('Please enter a valid email address.');
+    }
+
+    // 1. Try Firebase Auth with email & pass first
     try {
-      const res = await signInWithEmailAndPassword(auth, email, pass);
+      const res = await signInWithEmailAndPassword(auth, email, cleanPass);
       if (res.user) {
         await syncUserProfile(res.user);
+        return;
       }
     } catch (err: any) {
-      console.warn('Firebase signInWithEmail notice:', err?.code || err);
-      // Fallback for customer or admin if Email/Password provider is disabled in Firebase console or local credential
-      if (email === ADMIN_EMAIL) {
-        return loginAsMasterAdmin('admin2026');
-      }
-
-      const safeId = `user-${email.toLowerCase().replace(/[^a-z0-9]/g, '_')}`;
-      let existingProfile: UserProfile | null = null;
-      try {
-        const snap = await getDoc(doc(db, 'users', safeId));
-        if (snap.exists()) {
-          existingProfile = snap.data() as UserProfile;
-        }
-      } catch (e) {}
-
-      const localProfile: UserProfile = existingProfile || {
-        id: safeId,
-        email: email,
-        displayName: email.split('@')[0],
-        photoURL: `https://api.dicebear.com/7.x/avataaars/svg?seed=${safeId}`,
-        role: 'user',
-        status: 'active',
-        walletBalance: 0,
-        totalEarned: 0,
-        completedTasksCount: 0,
-        demoTasksCompleted: 0,
-        activePlan: 'none',
-        planExpiresAt: '',
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      };
-
-      try {
-        await setDoc(doc(db, 'users', safeId), localProfile, { merge: true });
-      } catch (e) {}
-
-      setUserProfile(localProfile);
-      setCurrentUser(makeUserFromProfile(localProfile));
-      localStorage.setItem('customer_session', JSON.stringify(localProfile));
-      localStorage.setItem('demo_worker_session', 'true');
+      console.warn('Firebase signIn notice:', err?.code || err?.message);
     }
+
+    // 2. Lookup Firestore for this customer
+    const docId = `user-${cleanId}`;
+    let existingProfile: UserProfile | null = null;
+
+    try {
+      const snap = await getDoc(doc(db, 'users', docId));
+      if (snap.exists()) {
+        existingProfile = snap.data() as UserProfile;
+      }
+    } catch (e) {
+      console.warn('Firestore lookup notice:', e);
+    }
+
+    // Also check local storage backup for offline or immediate access
+    if (!existingProfile && typeof window !== 'undefined') {
+      const saved = localStorage.getItem(`user_profile_${cleanId}`);
+      if (saved) {
+        try {
+          existingProfile = JSON.parse(saved);
+        } catch (e) {}
+      }
+    }
+
+    if (existingProfile) {
+      // Check stored password if present
+      if (existingProfile.password && existingProfile.password !== cleanPass) {
+        throw new Error('Incorrect password. Please verify your password and try again.');
+      }
+      setUserProfile(existingProfile);
+      setCurrentUser(makeUserFromProfile(existingProfile));
+      localStorage.setItem('customer_session', JSON.stringify(existingProfile));
+      return;
+    }
+
+    // If profile didn't exist yet, create their account smoothly
+    const newProfile: UserProfile = {
+      id: docId,
+      email: email,
+      phone: phone || undefined,
+      password: cleanPass,
+      displayName: isPhone ? `Reviewer ${phone.slice(-4)}` : email.split('@')[0],
+      photoURL: `https://api.dicebear.com/7.x/avataaars/svg?seed=${cleanId}`,
+      role: 'user',
+      status: 'active',
+      walletBalance: 0,
+      totalEarned: 0,
+      completedTasksCount: 0,
+      demoTasksCompleted: 0,
+      activePlan: 'none',
+      planExpiresAt: '',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    try {
+      await setDoc(doc(db, 'users', docId), newProfile, { merge: true });
+    } catch (e) {}
+
+    if (typeof window !== 'undefined') {
+      localStorage.setItem(`user_profile_${cleanId}`, JSON.stringify(newProfile));
+      localStorage.setItem('customer_session', JSON.stringify(newProfile));
+    }
+
+    setUserProfile(newProfile);
+    setCurrentUser(makeUserFromProfile(newProfile));
+  };
+
+  const signUpWithManualCredentials = async (name: string, rawIdentifier: string, pass: string) => {
+    const cleanName = name.trim();
+    const trimmedId = rawIdentifier.trim();
+    const cleanPass = pass.trim();
+
+    if (!cleanName) {
+      throw new Error('Please enter your full name.');
+    }
+    if (!trimmedId) {
+      throw new Error('Please enter your Email Address or Mobile Number.');
+    }
+    if (cleanPass.length < 6) {
+      throw new Error('Password must be at least 6 characters long.');
+    }
+
+    const { email, phone, isPhone, cleanId } = normalizeIdentifier(trimmedId);
+    if (isPhone && phone.length < 10) {
+      throw new Error('Please enter a valid 10-digit mobile number.');
+    }
+    if (!isPhone && (!email.includes('@') || !email.includes('.'))) {
+      throw new Error('Please enter a valid email address.');
+    }
+
+    const docId = `user-${cleanId}`;
+
+    // Try creating via Firebase Auth as well
+    try {
+      const res = await createUserWithEmailAndPassword(auth, email, cleanPass);
+      if (res.user) {
+        await updateProfile(res.user, { displayName: cleanName });
+      }
+    } catch (err: any) {
+      console.warn('Firebase createUser notice:', err?.code || err?.message);
+    }
+
+    const newProfile: UserProfile = {
+      id: docId,
+      email: email,
+      phone: phone || undefined,
+      password: cleanPass,
+      displayName: cleanName,
+      photoURL: `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(cleanName)}`,
+      role: 'user',
+      status: 'active',
+      walletBalance: 0,
+      totalEarned: 0,
+      completedTasksCount: 0,
+      demoTasksCompleted: 0,
+      activePlan: 'none',
+      planExpiresAt: '',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    try {
+      await setDoc(doc(db, 'users', docId), newProfile, { merge: true });
+    } catch (e) {
+      console.warn('Firestore setDoc notice:', e);
+    }
+
+    if (typeof window !== 'undefined') {
+      localStorage.setItem(`user_profile_${cleanId}`, JSON.stringify(newProfile));
+      localStorage.setItem('customer_session', JSON.stringify(newProfile));
+    }
+
+    setUserProfile(newProfile);
+    setCurrentUser(makeUserFromProfile(newProfile));
+  };
+
+  const signInWithEmail = async (email: string, pass: string) => {
+    return signInWithManualCredentials(email, pass);
   };
 
   const signUpWithEmail = async (email: string, pass: string, name: string) => {
-    try {
-      const res = await createUserWithEmailAndPassword(auth, email, pass);
-      if (res.user) {
-        await updateProfile(res.user, { displayName: name });
-        await syncUserProfile(res.user);
-      }
-    } catch (err: any) {
-      console.warn('Firebase signUpWithEmail notice:', err?.code || err);
-      const safeId = `reviewer-${Date.now().toString().slice(-6)}-${email.toLowerCase().replace(/[^a-z0-9]/g, '_').slice(0, 8)}`;
-      const localProfile: UserProfile = {
-        id: safeId,
-        email: email || 'reviewer@reviewearn.com',
-        displayName: name || email.split('@')[0],
-        photoURL: `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(name || safeId)}`,
-        role: email === ADMIN_EMAIL ? 'admin' : 'user',
-        status: 'active',
-        walletBalance: 0,
-        totalEarned: 0,
-        completedTasksCount: 0,
-        demoTasksCompleted: 0,
-        activePlan: 'none',
-        planExpiresAt: '',
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      };
-
-      try {
-        await setDoc(doc(db, 'users', safeId), localProfile, { merge: true });
-      } catch (e) {}
-
-      setUserProfile(localProfile);
-      setCurrentUser(makeUserFromProfile(localProfile));
-      localStorage.setItem('customer_session', JSON.stringify(localProfile));
-      localStorage.setItem('demo_worker_session', 'true');
-    }
+    return signUpWithManualCredentials(name, email, pass);
   };
 
   const signInAsDemo = async (role: 'user' | 'admin' = 'user') => {
@@ -439,6 +548,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         signInWithGoogle,
         signInWithEmail,
         signUpWithEmail,
+        signInWithManualCredentials,
+        signUpWithManualCredentials,
         signInAsDemo,
         toggleAdminRoleForDemo,
         logout,

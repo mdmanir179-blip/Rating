@@ -9,7 +9,8 @@ import {
   Crown,
   Layers,
   Smartphone,
-  ShieldCheck
+  ShieldCheck,
+  QrCode
 } from 'lucide-react';
 
 interface NavbarProps {
@@ -17,6 +18,7 @@ interface NavbarProps {
   onOpenWallet: () => void;
   onOpenPlans: () => void;
   onOpenInstallApp?: () => void;
+  onOpenQrScanner?: () => void;
   currentTab: 'portal' | 'tasks' | 'admin';
   setCurrentTab: (tab: 'portal' | 'tasks' | 'admin') => void;
   isAdminRoute?: boolean;
@@ -27,6 +29,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   onOpenWallet,
   onOpenPlans,
   onOpenInstallApp,
+  onOpenQrScanner,
   currentTab,
   setCurrentTab,
   isAdminRoute,
@@ -112,6 +115,17 @@ export const Navbar: React.FC<NavbarProps> = ({
               Plans &amp; Packages
             </button>
 
+            {/* Payment QR Scanner Button */}
+            {onOpenQrScanner && (
+              <button
+                onClick={onOpenQrScanner}
+                className="px-3 py-2 rounded-lg text-emerald-800 bg-emerald-50 hover:bg-emerald-100 transition-colors flex items-center gap-1.5 font-bold text-xs border border-emerald-200 shadow-2xs"
+              >
+                <QrCode className="w-3.5 h-3.5 text-emerald-600" />
+                <span>QR Scanner</span>
+              </button>
+            )}
+
             {/* Install App Button */}
             {onOpenInstallApp && (
               <button
@@ -136,7 +150,17 @@ export const Navbar: React.FC<NavbarProps> = ({
           </nav>
 
           {/* Right Action Controls */}
-          <div className="flex items-center gap-2.5">
+          <div className="flex items-center gap-2">
+            {/* Mobile QR Scanner quick button */}
+            {onOpenQrScanner && (
+              <button
+                onClick={onOpenQrScanner}
+                title="Scan QR Code to Pay"
+                className="sm:hidden p-2 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 text-xs font-bold transition-all flex items-center shadow-2xs"
+              >
+                <QrCode className="w-4 h-4 text-emerald-600" />
+              </button>
+            )}
             {isLoggedIn && userProfile ? (
               <>
                 {/* Active Plan Tag */}

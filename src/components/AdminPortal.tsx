@@ -41,9 +41,14 @@ import {
   Tag,
   Eye,
   EyeOff,
-  Sparkles
+  Sparkles,
+  QrCode,
+  Check,
+  Briefcase,
+  Crown
 } from 'lucide-react';
 import { getPlatformMeta } from './ProductCard';
+import { compressImageFile } from '../utils/imageUtils';
 
 interface AdminPortalProps {
   onBack: () => void;
@@ -163,15 +168,126 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
     }
   };
 
-  // Image upload handler (converts file to base64 Data URL)
-  const handleImageFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const [bulkRewardAmount, setBulkRewardAmount] = useState<number>(20);
+  const [isUpdatingRewards, setIsUpdatingRewards] = useState(false);
+  const [bulkRewardSuccess, setBulkRewardSuccess] = useState<string | null>(null);
+  const [userStatusFilter, setUserStatusFilter] = useState<'all' | 'assigned' | 'active' | 'inactive'>('all');
+
+  // Worker Task Assignment state
+  const [selectedWorkerForTask, setSelectedWorkerForTask] = useState<UserProfile | null>(null);
+  const [workerAssignedProducts, setWorkerAssignedProducts] = useState<string[]>([]);
+  const [workerCustomLimit, setWorkerCustomLimit] = useState<number>(0);
+  const [workerPlanToGrant, setWorkerPlanToGrant] = useState<string>('keep');
+  const [workerBonusCredit, setWorkerBonusCredit] = useState<number>(0);
+  const [workerNotes, setWorkerNotes] = useState<string>('');
+  const [assigningLoading, setAssigningLoading] = useState(false);
+  const [assignSuccessToast, setAssignSuccessToast] = useState<string | null>(null);
+
+  const openAssignWorkModal = (worker: UserProfile) => {
+    setSelectedWorkerForTask(worker);
+    setWorkerAssignedProducts(worker.assignedProductIds || []);
+    setWorkerCustomLimit(worker.customTaskLimit || 0);
+    setWorkerPlanToGrant(worker.activePlan || 'keep');
+    setWorkerBonusCredit(0);
+    setWorkerNotes(worker.assignedNotes || '');
+  };
+
+  const handleSaveWorkerAssignment = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedWorkerForTask) return;
+    setAssigningLoading(true);
+    try {
+      const userRef = doc(db, 'users', selectedWorkerForTask.id);
+      const updates: any = {
+        assignedProductIds: workerAssignedProducts,
+        customTaskLimit: Number(workerCustomLimit) || 0,
+        assignedNotes: workerNotes.trim(),
+        updatedAt: new Date().toISOString(),
+      };
+      if (workerPlanToGrant !== 'keep') {
+        updates.activePlan = workerPlanToGrant;
+      }
+      if (Number(workerBonusCredit) > 0) {
+        updates.walletBalance = (selectedWorkerForTask.walletBalance || 0) + Number(workerBonusCredit);
+        updates.totalEarned = (selectedWorkerForTask.totalEarned || 0) + Number(workerBonusCredit);
+      }
+      try {
+        await updateDoc(userRef, updates);
+      } catch (e) {
+        await setDoc(userRef, updates, { merge: true });
+      }
+
+      setUserList((prev) =>
+        prev.map((u) => (u.id === selectedWorkerForTask.id ? { ...u, ...updates } : u))
+      );
+
+      setAssignSuccessToast(`✓ Work & tasks assigned to ${selectedWorkerForTask.displayName || selectedWorkerForTask.email}!`);
+      setTimeout(() => setAssignSuccessToast(null), 4000);
+      setSelectedWorkerForTask(null);
+    } catch (err) {
+      console.error('Error assigning work:', err);
+      handleFirestoreError(err, OperationType.UPDATE, `users/${selectedWorkerForTask.id}`);
+    } finally {
+      setAssigningLoading(false);
+    }
+  };
+
+  const handleApplyBulkReward = async () => {
+    if (!bulkRewardAmount || bulkRewardAmount <= 0) return;
+    setIsUpdatingRewards(true);
+    setBulkRewardSuccess(`Updating per-rating reward to ₹${bulkRewardAmount}...`);
+    try {
+      // 1. Save to settings in Firestore
+      const updatedSettings: AdminSettings = {
+        ...settings,
+        defaultRatingReward: Number(bulkRewardAmount),
+        updatedAt: new Date().toISOString(),
+      };
+      setSettings(updatedSettings);
+      try {
+        await setDoc(doc(db, 'settings', 'payment_config'), updatedSettings, { merge: true });
+      } catch (err) {
+        console.warn('Settings setDoc error:', err);
+      }
+
+      // 2. Update all products in Firestore and in app
+      for (const prod of products) {
+        const updated: Product = { ...prod, rewardAmount: Number(bulkRewardAmount) };
+        await onUpdateProduct(updated);
+      }
+      setBulkRewardSuccess(`✓ Successfully updated reward to ₹${bulkRewardAmount} per rating across all ${products.length} products! Customer portal is now live with the new rate.`);
+      setTimeout(() => setBulkRewardSuccess(null), 5000);
+    } catch (e) {
+      console.error('Error updating bulk rewards:', e);
+      setBulkRewardSuccess('Failed to apply bulk rewards.');
+    } finally {
+      setIsUpdatingRewards(false);
+    }
+  };
+
+  // Image upload handler (compresses file to optimized JPEG Data URL ~40-70KB)
+  const handleImageFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setProdImage(reader.result as string);
-      };
-      reader.readAsDataURL(file);
+      try {
+        const compressed = await compressImageFile(file, 800, 800, 0.82);
+        setProdImage(compressed);
+      } catch (err) {
+        console.error('Image compression error:', err);
+      }
+    }
+  };
+
+  // QR Code upload handler (compresses file to optimized JPEG Data URL ~40-60KB)
+  const handleQrCodeFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      try {
+        const compressed = await compressImageFile(file, 600, 600, 0.85);
+        setSettings((prev) => ({ ...prev, qrCodeUrl: compressed }));
+      } catch (err) {
+        console.error('QR code compression error:', err);
+      }
     }
   };
 
@@ -187,14 +303,15 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
     }
   };
 
-  const handleBannerImageFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleBannerImageFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setBannerImage(reader.result as string);
-      };
-      reader.readAsDataURL(file);
+      try {
+        const compressed = await compressImageFile(file, 1200, 600, 0.82);
+        setBannerImage(compressed);
+      } catch (err) {
+        console.error('Banner compression error:', err);
+      }
     }
   };
 
@@ -356,8 +473,15 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
   };
 
   const filteredUsers = userList.filter((u) => {
+    if (userStatusFilter === 'active' && u.status === 'inactive') return false;
+    if (userStatusFilter === 'inactive' && u.status !== 'inactive') return false;
+    if (!userSearchQuery.trim()) return true;
     const q = userSearchQuery.toLowerCase();
-    return u.email?.toLowerCase().includes(q) || u.displayName?.toLowerCase().includes(q);
+    return (
+      (u.email && u.email.toLowerCase().includes(q)) ||
+      (u.displayName && u.displayName.toLowerCase().includes(q)) ||
+      (u.phone && u.phone.includes(q))
+    );
   });
 
   return (
@@ -395,6 +519,65 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
         </button>
       </div>
 
+      {/* GLOBAL PER-RATING REWARD RATE CONFIGURATION CARD (Edit Rate Option) */}
+      <div className="mt-5 p-4 sm:p-5 rounded-2xl bg-gradient-to-r from-emerald-50 via-teal-50/50 to-indigo-50 border-2 border-emerald-300 shadow-xs flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+        <div className="flex items-start gap-3">
+          <div className="w-10 h-10 rounded-xl bg-emerald-600 text-white flex items-center justify-center font-black text-lg shrink-0 shadow-sm">
+            ₹
+          </div>
+          <div>
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 className="text-sm sm:text-base font-black text-slate-900 tracking-tight">
+                Per Rating Cash Reward Rate (প্রতি রেটিং এ কত টাকা দেওয়া হবে - Edit Rate)
+              </h2>
+              <span className="px-2.5 py-0.5 rounded-full bg-emerald-600 text-white text-[11px] font-bold shadow-2xs">
+                Live Rate: ₹{settings.defaultRatingReward || 20} / Rating
+              </span>
+            </div>
+            <p className="text-xs text-slate-600 mt-1 max-w-2xl">
+              Edit how much cash reviewers earn per product rating. Click "Update Live Rate" to immediately save to database and update all marketplace products &amp; live customer portal in real-time.
+            </p>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2.5 w-full md:w-auto">
+          <div className="flex items-center bg-white rounded-xl border-2 border-emerald-400 px-3 py-1.5 shadow-xs">
+            <span className="text-sm font-black text-emerald-700 mr-1.5">₹</span>
+            <input
+              type="number"
+              min="1"
+              value={bulkRewardAmount}
+              onChange={(e) => setBulkRewardAmount(Number(e.target.value))}
+              className="w-20 text-base font-black text-slate-900 outline-none"
+              placeholder="20"
+            />
+          </div>
+
+          <button
+            onClick={handleApplyBulkReward}
+            disabled={isUpdatingRewards}
+            className="px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition-all shadow-md flex items-center gap-1.5 active:scale-95 disabled:opacity-50"
+          >
+            <Sparkles className="w-4 h-4 text-amber-300" />
+            <span>{isUpdatingRewards ? 'Updating...' : 'Update Live Rate (রেট কার্যকর করুন)'}</span>
+          </button>
+        </div>
+      </div>
+
+      {bulkRewardSuccess && (
+        <div className="mt-3 p-3 rounded-xl bg-emerald-100 border border-emerald-300 text-emerald-900 text-xs font-bold flex items-center gap-2 animate-in fade-in">
+          <CheckCircle className="w-4 h-4 text-emerald-700 shrink-0" />
+          <span>{bulkRewardSuccess}</span>
+        </div>
+      )}
+
+      {assignSuccessToast && (
+        <div className="mt-3 p-3 rounded-xl bg-indigo-100 border border-indigo-300 text-indigo-900 text-xs font-bold flex items-center gap-2 animate-in fade-in">
+          <CheckCircle className="w-4 h-4 text-indigo-700 shrink-0" />
+          <span>{assignSuccessToast}</span>
+        </div>
+      )}
+
       {/* Tabs */}
       <div className="flex border-b border-slate-200 mt-6 gap-2 text-xs sm:text-sm font-bold overflow-x-auto">
         <button
@@ -406,7 +589,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
           }`}
         >
           <Users className="w-4 h-4" />
-          <span>Customer Management ({userList.length})</span>
+          <span>Workers &amp; Task Allocation ({userList.length})</span>
         </button>
 
         <button
@@ -473,107 +656,285 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
       {/* TAB CONTENT */}
       <div className="mt-6">
         
-        {/* TAB 1: CUSTOMER MANAGEMENT (ACTIVE / INACTIVE TOGGLE) */}
+        {/* TAB 1: CUSTOMER WORKERS MANAGEMENT DATA TABLE */}
         {activeTab === 'users' && (
-          <div className="space-y-4">
-            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-              <div>
-                <h3 className="text-base font-bold text-slate-900">Registered Customer &amp; Reviewer Accounts</h3>
-                <p className="text-xs text-slate-500">
-                  Admin can deactivate or reactivate any worker. Inactive accounts cannot submit reviews or withdraw.
-                </p>
+          <div className="space-y-5">
+            
+            {/* Top Stat Summary Cards */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4">
+              <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs">
+                <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Total Workers</div>
+                <div className="text-xl sm:text-2xl font-black text-slate-900 mt-1">{userList.length}</div>
+                <div className="text-[10px] text-slate-400 mt-0.5">Registered Reviewers</div>
               </div>
 
-              <div className="relative w-full sm:w-64">
-                <Search className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
+              <div className="bg-white p-4 rounded-2xl border border-emerald-100 bg-emerald-50/20 shadow-xs">
+                <div className="text-[11px] font-bold uppercase tracking-wider text-emerald-700">Active Workers</div>
+                <div className="text-xl sm:text-2xl font-black text-emerald-600 mt-1">
+                  {userList.filter((u) => u.status !== 'inactive').length}
+                </div>
+                <div className="text-[10px] text-emerald-600 mt-0.5">Eligible for Rating Tasks</div>
+              </div>
+
+              <div className="bg-white p-4 rounded-2xl border border-rose-100 bg-rose-50/20 shadow-xs">
+                <div className="text-[11px] font-bold uppercase tracking-wider text-rose-700">Suspended / Inactive</div>
+                <div className="text-xl sm:text-2xl font-black text-rose-600 mt-1">
+                  {userList.filter((u) => u.status === 'inactive').length}
+                </div>
+                <div className="text-[10px] text-rose-500 mt-0.5">Task access disabled</div>
+              </div>
+
+              <div className="bg-white p-4 rounded-2xl border border-indigo-100 bg-indigo-50/20 shadow-xs">
+                <div className="text-[11px] font-bold uppercase tracking-wider text-indigo-700">Total Payouts Earned</div>
+                <div className="text-xl sm:text-2xl font-black text-indigo-600 mt-1">
+                  ₹{userList.reduce((acc, u) => acc + (u.totalEarned || 0), 0).toLocaleString('en-IN')}
+                </div>
+                <div className="text-[10px] text-indigo-500 mt-0.5">Wallet Balances: ₹{userList.reduce((acc, u) => acc + (u.walletBalance || 0), 0).toLocaleString('en-IN')}</div>
+              </div>
+            </div>
+
+            {/* Filter and Search Bar */}
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 bg-white p-4 rounded-2xl border border-slate-200">
+              <div className="flex items-center gap-1.5 overflow-x-auto max-w-full">
+                <button
+                  type="button"
+                  onClick={() => setUserStatusFilter('all')}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                    userStatusFilter === 'all'
+                      ? 'bg-slate-900 text-white'
+                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  }`}
+                >
+                  All Workers ({userList.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setUserStatusFilter('assigned')}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                    userStatusFilter === 'assigned'
+                      ? 'bg-indigo-600 text-white'
+                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  }`}
+                >
+                  Assigned Work (যাদের কাজ দেওয়া হয়েছে) ({userList.filter(u => (u.assignedProductIds && u.assignedProductIds.length > 0) || (u.customTaskLimit && u.customTaskLimit > 0) || (u.activePlan && u.activePlan !== 'none')).length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setUserStatusFilter('active')}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                    userStatusFilter === 'active'
+                      ? 'bg-emerald-600 text-white'
+                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  }`}
+                >
+                  Active ({userList.filter((u) => u.status !== 'inactive').length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setUserStatusFilter('inactive')}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                    userStatusFilter === 'inactive'
+                      ? 'bg-rose-600 text-white'
+                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  }`}
+                >
+                  Suspended ({userList.filter((u) => u.status === 'inactive').length})
+                </button>
+              </div>
+
+              <div className="relative w-full sm:w-72">
+                <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
                 <input
                   type="text"
                   value={userSearchQuery}
                   onChange={(e) => setUserSearchQuery(e.target.value)}
-                  placeholder="Search by name or email..."
-                  className="w-full pl-9 pr-3 py-2 text-xs sm:text-sm rounded-xl border border-slate-300 bg-white"
+                  placeholder="Search name, email, or mobile..."
+                  className="w-full pl-9 pr-3 py-2 text-xs sm:text-sm rounded-xl border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 />
               </div>
             </div>
 
+            {/* Workers Data Table */}
             {filteredUsers.length === 0 ? (
-              <div className="p-8 rounded-2xl bg-white border border-slate-200 text-center text-slate-500 text-sm">
-                No users found.
+              <div className="p-12 rounded-2xl bg-white border border-slate-200 text-center text-slate-500 text-sm">
+                No workers found matching your filter criteria.
               </div>
             ) : (
-              <div className="grid grid-cols-1 gap-3">
-                {filteredUsers.map((u) => {
-                  const isInactive = u.status === 'inactive';
-                  return (
-                    <div
-                      key={u.id}
-                      className={`p-4 sm:p-5 rounded-2xl border transition-all flex flex-col md:flex-row items-start md:items-center justify-between gap-4 ${
-                        isInactive
-                          ? 'bg-rose-50/50 border-rose-200'
-                          : 'bg-white border-slate-200 shadow-xs'
-                      }`}
-                    >
-                      <div className="flex items-center gap-3">
-                        <img
-                          src={u.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${u.id}`}
-                          alt=""
-                          className="w-12 h-12 rounded-full border border-slate-300 object-cover shrink-0"
-                        />
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <span className="text-sm font-bold text-slate-900">{u.displayName || 'Reviewer'}</span>
-                            <span
-                              className={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase ${
-                                isInactive ? 'bg-rose-100 text-rose-700' : 'bg-emerald-100 text-emerald-700'
-                              }`}
-                            >
-                              {isInactive ? 'Inactive / Suspended' : 'Active Account'}
-                            </span>
-                            {u.role === 'admin' && (
-                              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-purple-100 text-purple-700">
-                                Administrator
-                              </span>
-                            )}
-                          </div>
-
-                          <div className="text-xs text-slate-500 mt-0.5 font-mono">
-                            {u.email}
-                          </div>
-
-                          <div className="text-xs text-slate-600 mt-1 flex flex-wrap gap-x-4 gap-y-1">
-                            <span>Wallet Balance: <strong className="text-emerald-600">₹{u.walletBalance || 0}</strong></span>
-                            <span>Total Earned: <strong>₹{u.totalEarned || 0}</strong></span>
-                            <span>Demo Done: <strong>{u.demoTasksCompleted || 0} / 5</strong></span>
-                            <span>Plan: <strong>{u.activePlan || 'none'}</strong></span>
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="flex items-center gap-2 self-end md:self-center">
-                        <button
-                          onClick={() => handleToggleUserStatus(u)}
-                          className={`px-4 py-2 rounded-xl text-xs font-bold transition-all shadow-xs flex items-center gap-1.5 ${
-                            isInactive
-                              ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
-                              : 'bg-rose-600 hover:bg-rose-700 text-white'
+              <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-xs">
+                <table className="w-full text-left text-xs border-collapse">
+                  <thead className="bg-slate-50 border-b border-slate-200 text-slate-700 font-bold uppercase tracking-wider text-[11px]">
+                    <tr>
+                      <th className="py-3.5 px-4">Worker / Reviewer</th>
+                      <th className="py-3.5 px-4">Contact (Email / Mobile)</th>
+                      <th className="py-3.5 px-4">Account Status</th>
+                      <th className="py-3.5 px-4">Assigned Work (বরাদ্দকৃত কাজ)</th>
+                      <th className="py-3.5 px-4">Wallet Balance</th>
+                      <th className="py-3.5 px-4">Total Earned</th>
+                      <th className="py-3.5 px-4">Demo / Tasks</th>
+                      <th className="py-3.5 px-4">Membership Plan</th>
+                      <th className="py-3.5 px-4 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {filteredUsers.map((u) => {
+                      const isInactive = u.status === 'inactive';
+                      return (
+                        <tr
+                          key={u.id}
+                          className={`hover:bg-slate-50/80 transition-colors ${
+                            isInactive ? 'bg-rose-50/30' : ''
                           }`}
                         >
-                          {isInactive ? (
-                            <>
-                              <UserCheck className="w-4 h-4" />
-                              <span>Reactivate Account</span>
-                            </>
-                          ) : (
-                            <>
-                              <UserX className="w-4 h-4" />
-                              <span>Deactivate / Suspend Account</span>
-                            </>
-                          )}
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })}
+                          {/* Worker Avatar & Name */}
+                          <td className="py-3.5 px-4 whitespace-nowrap">
+                            <div className="flex items-center gap-3">
+                              <img
+                                src={u.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${u.id}`}
+                                alt=""
+                                className="w-9 h-9 rounded-full border border-slate-200 object-cover shrink-0"
+                              />
+                              <div>
+                                <div className="font-bold text-slate-900 text-xs sm:text-sm">
+                                  {u.displayName || 'Reviewer'}
+                                </div>
+                                <div className="text-[10px] text-slate-400 font-mono">
+                                  ID: #{u.id.slice(0, 10)}
+                                </div>
+                              </div>
+                            </div>
+                          </td>
+
+                          {/* Contact Email & Phone */}
+                          <td className="py-3.5 px-4 whitespace-nowrap">
+                            <div className="text-slate-800 font-medium">{u.email}</div>
+                            {u.phone ? (
+                              <div className="text-[11px] text-indigo-600 font-mono font-semibold">
+                                📞 +91 {u.phone}
+                              </div>
+                            ) : (
+                              <div className="text-[10px] text-slate-400">Email Login</div>
+                            )}
+                          </td>
+
+                          {/* Status Badge */}
+                          <td className="py-3.5 px-4 whitespace-nowrap">
+                            <span
+                              className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold ${
+                                isInactive
+                                  ? 'bg-rose-100 text-rose-700 border border-rose-200'
+                                  : 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                              }`}
+                            >
+                              <span
+                                className={`w-1.5 h-1.5 rounded-full ${
+                                  isInactive ? 'bg-rose-600' : 'bg-emerald-600'
+                                }`}
+                              ></span>
+                              {isInactive ? 'Suspended' : 'Active'}
+                            </span>
+                          </td>
+
+                          {/* Assigned Work & Task Allocation */}
+                          <td className="py-3.5 px-4 whitespace-nowrap">
+                            {u.assignedProductIds && u.assignedProductIds.length > 0 ? (
+                              <div className="font-bold text-indigo-700 bg-indigo-50 px-2.5 py-1 rounded-lg border border-indigo-200 inline-flex items-center gap-1.5 shadow-2xs">
+                                <Briefcase className="w-3.5 h-3.5 text-indigo-600" />
+                                <span>{u.assignedProductIds.length} Products Assigned</span>
+                              </div>
+                            ) : u.customTaskLimit && u.customTaskLimit > 0 ? (
+                              <div className="font-bold text-amber-700 bg-amber-50 px-2.5 py-1 rounded-lg border border-amber-200 inline-flex items-center gap-1.5 shadow-2xs">
+                                <Sparkles className="w-3.5 h-3.5 text-amber-600" />
+                                <span>Bonus: {u.customTaskLimit} tasks</span>
+                              </div>
+                            ) : (
+                              <span className="text-slate-400 text-xs font-medium">Standard Catalog</span>
+                            )}
+                            {u.assignedNotes && (
+                              <div className="text-[10px] text-slate-500 truncate max-w-[150px] mt-0.5 font-medium" title={u.assignedNotes}>
+                                📝 {u.assignedNotes}
+                              </div>
+                            )}
+                          </td>
+
+                          {/* Wallet Balance */}
+                          <td className="py-3.5 px-4 whitespace-nowrap font-mono font-bold text-emerald-600 text-sm">
+                            ₹{(u.walletBalance || 0).toLocaleString('en-IN')}
+                          </td>
+
+                          {/* Total Earned */}
+                          <td className="py-3.5 px-4 whitespace-nowrap font-mono font-semibold text-slate-700">
+                            ₹{(u.totalEarned || 0).toLocaleString('en-IN')}
+                          </td>
+
+                          {/* Tasks Done */}
+                          <td className="py-3.5 px-4 whitespace-nowrap">
+                            <div className="font-semibold text-slate-800">
+                              {u.completedTasksCount || 0} reviews
+                            </div>
+                            <div className="text-[10px] text-slate-400">
+                              Demo: {u.demoTasksCompleted || 0} / 5
+                            </div>
+                          </td>
+
+                          {/* Active Plan */}
+                          <td className="py-3.5 px-4 whitespace-nowrap">
+                            <span
+                              className={`px-2 py-0.5 rounded-md text-[10px] font-bold uppercase ${
+                                u.activePlan && u.activePlan !== 'none'
+                                  ? 'bg-amber-100 text-amber-900 border border-amber-200'
+                                  : 'bg-slate-100 text-slate-600'
+                              }`}
+                            >
+                              {u.activePlan && u.activePlan !== 'none'
+                                ? u.activePlan.replace('_', ' ')
+                                : 'Free Trial'}
+                            </span>
+                          </td>
+
+                          {/* Actions: Assign Work & Activate / Suspend Toggle */}
+                          <td className="py-3.5 px-4 text-right whitespace-nowrap">
+                            <div className="flex items-center justify-end gap-1.5">
+                              <button
+                                onClick={() => openAssignWorkModal(u)}
+                                className="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold transition-all shadow-2xs inline-flex items-center gap-1.5 active:scale-95"
+                                title="Assign specific products or tasks to this worker"
+                              >
+                                <Briefcase className="w-3.5 h-3.5" />
+                                <span>Assign Work (কাজ দিন)</span>
+                              </button>
+
+                              <button
+                                onClick={() => handleToggleUserStatus(u)}
+                                className={`px-2.5 py-1.5 rounded-xl text-xs font-bold transition-all shadow-2xs inline-flex items-center gap-1 ${
+                                  isInactive
+                                    ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                                    : 'bg-rose-50 text-rose-700 hover:bg-rose-600 hover:text-white border border-rose-200'
+                                }`}
+                                title={
+                                  isInactive
+                                    ? 'Reactivate worker account'
+                                    : 'Suspend worker account'
+                                }
+                              >
+                                {isInactive ? (
+                                  <>
+                                    <UserCheck className="w-3.5 h-3.5" />
+                                    <span>Activate</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <UserX className="w-3.5 h-3.5" />
+                                    <span>Suspend</span>
+                                  </>
+                                )}
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
               </div>
             )}
           </div>
@@ -954,22 +1315,71 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
               
-              {/* QR Scanner Image */}
-              <div className="md:col-span-2">
-                <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-1">
-                  BHIM UPI QR Code Image URL
+              {/* QR Scanner Image with File Upload */}
+              <div className="md:col-span-2 p-4 rounded-2xl bg-slate-50 border border-slate-200">
+                <label className="block text-xs font-bold uppercase tracking-wider text-slate-800 mb-2 flex items-center gap-2">
+                  <QrCode className="w-4 h-4 text-indigo-600" />
+                  <span>BHIM UPI QR Code Scanner Image</span>
                 </label>
-                <div className="flex gap-3 items-center">
-                  <input
-                    type="text"
-                    value={settings.qrCodeUrl}
-                    onChange={(e) => setSettings({ ...settings, qrCodeUrl: e.target.value })}
-                    className="flex-1 p-2.5 rounded-xl border border-slate-300 text-xs sm:text-sm font-mono focus:ring-2 focus:ring-indigo-500"
-                    placeholder="https://..."
-                  />
-                  <div className="w-12 h-12 rounded-lg border border-slate-200 overflow-hidden shrink-0 bg-slate-50">
-                    <img src={settings.qrCodeUrl} alt="Preview" className="w-full h-full object-cover" />
+                
+                <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center">
+                  <div className="w-24 h-24 rounded-xl bg-white border-2 border-dashed border-indigo-200 flex items-center justify-center overflow-hidden shrink-0 shadow-xs">
+                    {settings.qrCodeUrl ? (
+                      <img src={settings.qrCodeUrl} alt="UPI QR Code" className="w-full h-full object-cover" />
+                    ) : (
+                      <QrCode className="w-8 h-8 text-slate-300" />
+                    )}
                   </div>
+
+                  <div className="flex-1 space-y-2 w-full">
+                    <div className="flex flex-wrap gap-2 items-center">
+                      <label className="px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold cursor-pointer flex items-center gap-1.5 shadow-sm transition-all">
+                        <Upload className="w-3.5 h-3.5" />
+                        <span>Upload QR Image from Phone/PC</span>
+                        <input
+                          type="file"
+                          accept="image/*"
+                          onChange={handleQrCodeFileChange}
+                          className="hidden"
+                        />
+                      </label>
+                      <span className="text-[11px] text-slate-500">or enter image link below:</span>
+                    </div>
+
+                    <input
+                      type="text"
+                      value={settings.qrCodeUrl}
+                      onChange={(e) => setSettings({ ...settings, qrCodeUrl: e.target.value })}
+                      className="w-full p-2.5 rounded-xl border border-slate-300 text-xs sm:text-sm font-mono focus:ring-2 focus:ring-indigo-500 bg-white"
+                      placeholder="https://..."
+                    />
+                    <p className="text-[11px] text-emerald-600 font-medium">
+                      ✓ Changes to this QR Code update instantly on customer plan upgrades &amp; payment screens!
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Default Reward Per Review */}
+              <div className="md:col-span-2 p-4 rounded-2xl bg-emerald-50/70 border border-emerald-200">
+                <label className="block text-xs font-bold uppercase tracking-wider text-emerald-950 mb-1 flex items-center gap-1.5">
+                  <Sparkles className="w-4 h-4 text-emerald-600" />
+                  <span>Default Cash Reward Per Rating (INR ₹)</span>
+                </label>
+                <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
+                  <div className="flex items-center bg-white rounded-xl border border-emerald-300 px-3 py-1.5 shadow-xs">
+                    <span className="text-sm font-bold text-slate-500 mr-1.5">₹</span>
+                    <input
+                      type="number"
+                      min="1"
+                      value={settings.defaultRatingReward ?? 20}
+                      onChange={(e) => setSettings({ ...settings, defaultRatingReward: Number(e.target.value) })}
+                      className="w-20 text-base font-black text-emerald-700 outline-none"
+                    />
+                  </div>
+                  <span className="text-xs text-emerald-800">
+                    Reward amount given to reviewers per product rating (admin can edit anytime).
+                  </span>
                 </div>
               </div>
 
@@ -1171,30 +1581,73 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
               </div>
 
               {/* IMAGE UPLOAD / URL */}
-              <div className="p-3.5 rounded-xl border border-slate-200 bg-slate-50">
-                <label className="block text-xs font-bold text-slate-800 uppercase mb-1 flex items-center gap-1.5">
-                  <ImageIcon className="w-4 h-4 text-indigo-600" />
-                  <span>Product Image (Upload File or Enter URL)</span>
-                </label>
-                <div className="flex gap-2 items-center">
-                  <input
-                    type="text"
-                    value={prodImage}
-                    onChange={(e) => setProdImage(e.target.value)}
-                    placeholder="https://..."
-                    className="flex-1 p-2 text-xs sm:text-sm rounded-xl border border-slate-300 bg-white"
-                  />
-                  <label className="px-3 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold cursor-pointer flex items-center gap-1 shrink-0">
-                    <Upload className="w-3.5 h-3.5" />
-                    <span>Upload Image</span>
+              <div className="p-4 rounded-2xl border border-indigo-100 bg-indigo-50/40 space-y-3">
+                <div className="flex items-center justify-between">
+                  <label className="block text-xs font-bold text-slate-800 uppercase flex items-center gap-1.5">
+                    <ImageIcon className="w-4 h-4 text-indigo-600" />
+                    <span>Product Image (ছবি আপলোড করুন বা লিংক দিন)</span>
+                  </label>
+                  <span className="text-[11px] text-emerald-600 font-bold">Auto-Compressed</span>
+                </div>
+
+                {/* File Upload Button */}
+                <div className="flex flex-col sm:flex-row gap-2.5 items-stretch sm:items-center">
+                  <label className="px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold cursor-pointer flex items-center justify-center gap-2 shadow-sm transition-all active:scale-[0.98]">
+                    <Upload className="w-4 h-4" />
+                    <span>📁 Upload Image from PC / Phone (ডিভাইস থেকে ছবি আপলোড)</span>
                     <input type="file" accept="image/*" onChange={handleImageFileChange} className="hidden" />
                   </label>
+                  <span className="text-xs text-slate-500 font-medium text-center sm:text-left">or enter link:</span>
                 </div>
+
+                <input
+                  type="text"
+                  value={prodImage}
+                  onChange={(e) => setProdImage(e.target.value)}
+                  placeholder="https://..."
+                  className="w-full p-2.5 text-xs sm:text-sm rounded-xl border border-slate-300 bg-white focus:ring-2 focus:ring-indigo-500"
+                />
+
+                {/* Image Preview */}
                 {prodImage && (
-                  <div className="mt-2 w-16 h-16 rounded-lg border border-slate-200 overflow-hidden bg-white">
-                    <img src={prodImage} alt="Preview" className="w-full h-full object-cover" />
+                  <div className="flex items-center gap-3 p-2.5 rounded-xl bg-white border border-slate-200">
+                    <div className="w-16 h-16 rounded-lg border border-slate-200 overflow-hidden bg-slate-100 shrink-0">
+                      <img src={prodImage} alt="Product Preview" className="w-full h-full object-cover" />
+                    </div>
+                    <div className="text-xs">
+                      <div className="font-bold text-emerald-700 flex items-center gap-1">
+                        <CheckCircle className="w-3.5 h-3.5 text-emerald-600" />
+                        Image Attached &amp; Ready
+                      </div>
+                      <div className="text-slate-500 text-[11px]">
+                        Saved to database and will update customer portal instantly upon submit.
+                      </div>
+                    </div>
                   </div>
                 )}
+
+                {/* Quick Presets */}
+                <div className="pt-1">
+                  <span className="text-[10px] text-slate-500 font-semibold uppercase">Quick Sample Product Images:</span>
+                  <div className="flex flex-wrap gap-1.5 mt-1">
+                    {[
+                      { label: '🎧 Headphones', url: 'https://images.unsplash.com/photo-1505740420928-5e560c06d30e?auto=format&fit=crop&w=800&q=80' },
+                      { label: '⌚ Smartwatch', url: 'https://images.unsplash.com/photo-1523275335684-37898b6baf30?auto=format&fit=crop&w=800&q=80' },
+                      { label: '📱 Smartphone', url: 'https://images.unsplash.com/photo-1511707171634-5f897ff02aa9?auto=format&fit=crop&w=800&q=80' },
+                      { label: '👟 Sneakers', url: 'https://images.unsplash.com/photo-1542291026-7eec264c27ff?auto=format&fit=crop&w=800&q=80' },
+                      { label: '🧴 Skincare', url: 'https://images.unsplash.com/photo-1556228720-195a672e8a03?auto=format&fit=crop&w=800&q=80' },
+                    ].map((preset, idx) => (
+                      <button
+                        key={idx}
+                        type="button"
+                        onClick={() => setProdImage(preset.url)}
+                        className="px-2.5 py-1 rounded-lg bg-white border border-slate-200 hover:border-indigo-300 text-[11px] font-medium text-slate-700 transition-colors shadow-2xs"
+                      >
+                        {preset.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
               </div>
 
               {/* VIDEO UPLOAD / URL */}
@@ -1245,10 +1698,223 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs transition-colors flex items-center gap-1.5"
+                  className="px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs transition-colors flex items-center gap-1.5 shadow-md active:scale-95"
                 >
                   <Save className="w-3.5 h-3.5" />
                   <span>{editingProduct ? 'Save & Update in Customer Portal' : 'Add to Customer Portal'}</span>
+                </button>
+              </div>
+
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* WORKER TASK ASSIGNMENT MODAL (কাজ দিন) */}
+      {selectedWorkerForTask && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/70 backdrop-blur-sm animate-in fade-in duration-200 overflow-y-auto">
+          <div className="relative w-full max-w-2xl bg-white rounded-3xl shadow-2xl border border-slate-200 overflow-hidden my-6">
+            
+            {/* Modal Header */}
+            <div className="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 text-white p-5 sm:p-6 flex items-center justify-between">
+              <div>
+                <div className="inline-flex items-center gap-1.5 px-3 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 text-xs font-bold border border-indigo-500/30 mb-1">
+                  <Briefcase className="w-3.5 h-3.5" />
+                  Task Allocation &amp; Assignment (কাজ বণ্টন)
+                </div>
+                <h3 className="text-lg sm:text-xl font-black text-white">
+                  Assign Work to: {selectedWorkerForTask.displayName || selectedWorkerForTask.email}
+                </h3>
+                <p className="text-xs text-slate-300 mt-0.5">
+                  ID: #{selectedWorkerForTask.id.slice(0, 10)} • Contact: {selectedWorkerForTask.phone || selectedWorkerForTask.email}
+                </p>
+              </div>
+
+              <button
+                onClick={() => setSelectedWorkerForTask(null)}
+                className="p-1.5 rounded-full text-slate-400 hover:text-white hover:bg-white/10"
+              >
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveWorkerAssignment} className="p-5 sm:p-6 space-y-5 max-h-[80vh] overflow-y-auto">
+              
+              {/* 1. Select specific products to assign */}
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <label className="text-xs font-bold uppercase tracking-wider text-slate-800 flex items-center gap-1.5">
+                    <Package className="w-4 h-4 text-indigo-600" />
+                    <span>Select Products to Assign (রিভিউ করার জন্য প্রোডাক্ট নির্বাচন করুন)</span>
+                  </label>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setWorkerAssignedProducts(products.map(p => p.id))}
+                      className="text-[11px] font-bold text-indigo-600 hover:underline"
+                    >
+                      Select All ({products.length})
+                    </button>
+                    <span className="text-slate-300">|</span>
+                    <button
+                      type="button"
+                      onClick={() => setWorkerAssignedProducts([])}
+                      className="text-[11px] font-bold text-slate-500 hover:underline"
+                    >
+                      Clear
+                    </button>
+                  </div>
+                </div>
+
+                <div className="max-h-52 overflow-y-auto border border-slate-200 rounded-2xl p-2.5 divide-y divide-slate-100 bg-slate-50/50 space-y-1">
+                  {products.map((p) => {
+                    const isChecked = workerAssignedProducts.includes(p.id);
+                    return (
+                      <label
+                        key={p.id}
+                        className={`flex items-center justify-between p-2 rounded-xl cursor-pointer transition-colors ${
+                          isChecked ? 'bg-indigo-50 border border-indigo-200' : 'hover:bg-white'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <input
+                            type="checkbox"
+                            checked={isChecked}
+                            onChange={(e) => {
+                              if (e.target.checked) {
+                                setWorkerAssignedProducts((prev) => [...prev, p.id]);
+                              } else {
+                                setWorkerAssignedProducts((prev) => prev.filter(id => id !== p.id));
+                              }
+                            }}
+                            className="w-4 h-4 rounded text-indigo-600 focus:ring-indigo-500"
+                          />
+                          <img src={p.imageUrl} alt="" className="w-9 h-9 rounded-lg object-cover shrink-0 border border-slate-200" />
+                          <div className="truncate">
+                            <div className="text-xs font-bold text-slate-800 truncate">{p.title}</div>
+                            <div className="text-[10px] text-slate-500 capitalize">{p.platform} • ₹{p.originalPrice}</div>
+                          </div>
+                        </div>
+
+                        <span className="text-xs font-black text-emerald-600 shrink-0 ml-2">
+                          +₹{p.rewardAmount}
+                        </span>
+                      </label>
+                    );
+                  })}
+                </div>
+                <p className="text-[11px] text-slate-500 mt-1">
+                  {workerAssignedProducts.length === 0
+                    ? 'No specific products locked: Worker can access all standard marketplace catalog tasks.'
+                    : `✓ Worker is specifically assigned ${workerAssignedProducts.length} product tasks.`}
+                </p>
+              </div>
+
+              {/* 2. Custom Task Allowance / Daily Limit */}
+              <div className="p-4 rounded-2xl bg-amber-50/60 border border-amber-200">
+                <label className="block text-xs font-bold uppercase tracking-wider text-amber-950 mb-1 flex items-center gap-1.5">
+                  <Sparkles className="w-4 h-4 text-amber-600" />
+                  <span>Bonus / Custom Task Allowance (অতিরিক্ত টাস্কের পরিমাণ)</span>
+                </label>
+                <div className="flex items-center gap-3">
+                  <input
+                    type="number"
+                    min="0"
+                    value={workerCustomLimit}
+                    onChange={(e) => setWorkerCustomLimit(Number(e.target.value))}
+                    className="w-24 p-2 rounded-xl border border-amber-300 font-black text-amber-900 bg-white"
+                  />
+                  <div className="flex flex-wrap gap-1.5">
+                    {[5, 10, 20, 50, 100].map((num) => (
+                      <button
+                        key={num}
+                        type="button"
+                        onClick={() => setWorkerCustomLimit(num)}
+                        className="px-2.5 py-1 rounded-lg bg-white border border-amber-200 hover:bg-amber-100 text-xs font-bold text-amber-900 transition-colors"
+                      >
+                        +{num} Tasks
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <p className="text-[11px] text-amber-800 mt-1.5">
+                  Grant bonus daily reviews to this worker even before or alongside subscription plan.
+                </p>
+              </div>
+
+              {/* 3. Direct Plan Activation */}
+              <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200">
+                <label className="block text-xs font-bold uppercase tracking-wider text-slate-800 mb-1 flex items-center gap-1.5">
+                  <Crown className="w-4 h-4 text-amber-500" />
+                  <span>Grant / Upgrade Membership Plan (সরাসরি প্ল্যান চালু করুন)</span>
+                </label>
+                <select
+                  value={workerPlanToGrant}
+                  onChange={(e) => setWorkerPlanToGrant(e.target.value)}
+                  className="w-full p-2.5 text-xs sm:text-sm rounded-xl border border-slate-300 bg-white"
+                >
+                  <option value="keep">Keep Current Status ({selectedWorkerForTask.activePlan || 'Free Trial'})</option>
+                  <option value="none">Free Trial (Reset Plan)</option>
+                  <option value="3_days">3 Days Pro Earner (Active)</option>
+                  <option value="7_days">7 Days Master Earner (Active)</option>
+                  <option value="1_month">1 Month Elite Earner (Active)</option>
+                  <option value="6_months">6 Months VIP Earner (Active)</option>
+                  <option value="1_year">1 Year Unlimited Earner (Active)</option>
+                </select>
+                <p className="text-[11px] text-slate-500 mt-1">
+                  Admin can instantly unlock membership for this worker without requiring payment slip approval.
+                </p>
+              </div>
+
+              {/* 4. Bonus Wallet Credit */}
+              <div>
+                <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-1 flex items-center gap-1.5">
+                  <Wallet className="w-4 h-4 text-emerald-600" />
+                  <span>Add Bonus Cash to Worker Wallet (বোনাস টাকা যোগ করুন - INR ₹)</span>
+                </label>
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-bold text-slate-500">₹</span>
+                  <input
+                    type="number"
+                    min="0"
+                    value={workerBonusCredit}
+                    onChange={(e) => setWorkerBonusCredit(Number(e.target.value))}
+                    placeholder="0"
+                    className="w-32 p-2 text-xs sm:text-sm rounded-xl border border-slate-300 font-bold"
+                  />
+                  <span className="text-xs text-slate-500">Current Balance: ₹{selectedWorkerForTask.walletBalance || 0}</span>
+                </div>
+              </div>
+
+              {/* 5. Admin Notes */}
+              <div>
+                <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-1">
+                  Worker Assignment Notes (কাজের নির্দেশ বা মন্তব্য)
+                </label>
+                <input
+                  type="text"
+                  value={workerNotes}
+                  onChange={(e) => setWorkerNotes(e.target.value)}
+                  placeholder="e.g. Assigned Flipkart electronics reviews batch 1..."
+                  className="w-full p-2.5 text-xs sm:text-sm rounded-xl border border-slate-300"
+                />
+              </div>
+
+              <div className="pt-2 flex justify-end gap-2.5 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setSelectedWorkerForTask(null)}
+                  className="px-4 py-2.5 rounded-xl border border-slate-300 text-slate-700 font-bold text-xs"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={assigningLoading}
+                  className="px-6 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs transition-colors flex items-center gap-2 shadow-md active:scale-95 disabled:opacity-50"
+                >
+                  <Briefcase className="w-4 h-4" />
+                  <span>{assigningLoading ? 'Saving...' : 'Save & Allocate Tasks (কাজ বরাদ্দ করুন)'}</span>
                 </button>
               </div>
 

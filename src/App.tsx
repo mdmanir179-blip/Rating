@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { AuthProvider, useAuth } from './context/AuthContext';
-import { Product, PlatformType, OfferBanner } from './types';
+import { Product, PlatformType, OfferBanner, AdminSettings } from './types';
 import { INITIAL_PRODUCTS } from './data/mockProducts';
 import { INITIAL_BANNERS } from './data/mockBanners';
 import { Navbar } from './components/Navbar';
@@ -14,11 +14,13 @@ import { SecretAdminLogin } from './components/SecretAdminLogin';
 import { TaskQueue } from './components/TaskQueue';
 import { OfferBannerCard } from './components/OfferBannerCard';
 import { InstallAppModal } from './components/InstallAppModal';
+import { QrScannerModal } from './components/QrScannerModal';
 import { 
   collection, 
   doc, 
   setDoc, 
   deleteDoc, 
+  getDocs,
   query, 
   where,
   onSnapshot
@@ -34,8 +36,24 @@ import {
   AlertTriangle,
   Smartphone,
   Lock,
-  RefreshCw
+  RefreshCw,
+  QrCode
 } from 'lucide-react';
+import { DEFAULT_QR_CODE_SVG } from './utils/qrCodeHelper';
+
+const DEFAULT_SETTINGS: AdminSettings = {
+  qrCodeUrl: DEFAULT_QR_CODE_SVG,
+  upiId: 'reviewearn.pay@okhdfcbank',
+  phonePeNumber: '9876543210 (PhonePe / GPay)',
+  gPayNumber: '9876543210',
+  paytmNumber: '9876543210',
+  bankName: 'HDFC Bank Ltd / State Bank of India (SBI)',
+  bankAccountNo: '50200084920194',
+  bankIfsc: 'HDFC0001234',
+  accountHolderName: 'ReviewEarn Rating Technologies Pvt Ltd',
+  instructions: 'Transfer the plan price using any Indian UPI app (PhonePe, Google Pay, Paytm, BHIM) or Net Banking / IMPS. You can also scan the official UPI QR code. Submit your 12-digit UPI Reference / UTR / Transaction ID below for instant plan activation.',
+  defaultRatingReward: 20,
+};
 
 function MainApp() {
   const { currentUser, userProfile, isAdmin } = useAuth();
@@ -51,17 +69,55 @@ function MainApp() {
   const [isWalletModalOpen, setIsWalletModalOpen] = useState(false);
   const [isPlanModalOpen, setIsPlanModalOpen] = useState(false);
   const [isInstallModalOpen, setIsInstallModalOpen] = useState(false);
+  const [isQrScannerModalOpen, setIsQrScannerModalOpen] = useState(false);
   const [selectedProductForReview, setSelectedProductForReview] = useState<Product | null>(null);
+
+  // Real-time admin settings for payment QR scanner, UPI & rating reward
+  const [adminSettings, setAdminSettings] = useState<AdminSettings>(DEFAULT_SETTINGS);
 
   // PWA beforeinstallprompt event
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
 
-  // Real-time state from Firestore (always initialized with 15 mock products so products NEVER disappear)
+  // Real-time state from Firestore (always initialized with mock products so products NEVER disappear)
   const [products, setProducts] = useState<Product[]>(INITIAL_PRODUCTS);
   const [banners, setBanners] = useState<OfferBanner[]>(INITIAL_BANNERS);
   const [completedProductIds, setCompletedProductIds] = useState<Set<string>>(new Set());
   const [portalFilter, setPortalFilter] = useState<PlatformType | 'all'>('all');
   const [rewardToast, setRewardToast] = useState<{ amount: number; title: string } | null>(null);
+
+  // REAL-TIME FIRESTORE LISTENER FOR ADMIN PAYMENT CONFIG & QR SCANNER
+  useEffect(() => {
+    const unsubSettings = onSnapshot(
+      doc(db, 'settings', 'payment_config'),
+      (snap) => {
+        if (snap.exists()) {
+          setAdminSettings({ ...DEFAULT_SETTINGS, ...snap.data() } as AdminSettings);
+        }
+      },
+      (err) => {
+        console.warn('Real-time payment settings notice in App:', err);
+      }
+    );
+    return () => unsubSettings();
+  }, []);
+
+  // AUTO-SEED INITIAL PRODUCTS TO FIRESTORE DATABASE IF COLLECTION IS EMPTY
+  useEffect(() => {
+    const seedProductsIfEmpty = async () => {
+      try {
+        const snap = await getDocs(collection(db, 'products'));
+        if (snap.empty) {
+          console.log('Seeding initial marketplace catalog to Firestore database...');
+          for (const p of INITIAL_PRODUCTS) {
+            await setDoc(doc(db, 'products', p.id), p);
+          }
+        }
+      } catch (err) {
+        console.warn('Initial product seeding notice:', err);
+      }
+    };
+    seedProductsIfEmpty();
+  }, []);
 
   // Listen to URL hash for secret #admin
   useEffect(() => {
@@ -108,7 +164,7 @@ function MainApp() {
               platform: ((data.platform || 'amazon').toLowerCase()) as PlatformType,
               category: data.category || 'General Store',
               originalPrice: Number(data.originalPrice) || 999,
-              rewardAmount: Number(data.rewardAmount) || 20,
+              rewardAmount: Number(data.rewardAmount) || adminSettings.defaultRatingReward || 20,
               imageUrl: data.imageUrl || 'https://images.unsplash.com/photo-1505740420928-5e560c06d30e?auto=format&fit=crop&w=800&q=80',
               description: data.description || 'Authentic marketplace item ready for quality reviews.',
               rating: Number(data.rating) || 4.8,
@@ -131,7 +187,7 @@ function MainApp() {
     );
 
     return () => unsubProducts();
-  }, []);
+  }, [adminSettings.defaultRatingReward]);
 
   // REAL-TIME FIRESTORE LISTENER FOR OFFER BANNERS
   useEffect(() => {
@@ -243,10 +299,18 @@ function MainApp() {
     }, 4000);
   };
 
-  // Admin handlers
+  // Admin handlers for real-time cloud database products
   const handleAddProductAdmin = async (newProd: Product) => {
     try {
+      // 1. Immediately save to Firestore Cloud Database
       await setDoc(doc(db, 'products', newProd.id), newProd);
+      // 2. Immediately update local state so current view reflects it with 0ms delay
+      setProducts((prev) => [newProd, ...prev.filter((p) => p.id !== newProd.id)]);
+      setRewardToast({
+        amount: newProd.rewardAmount,
+        title: `Product "${newProd.title}" uploaded! Live in customer portal.`,
+      });
+      setTimeout(() => setRewardToast(null), 4000);
     } catch (err) {
       console.error(err);
       handleFirestoreError(err, OperationType.WRITE, `products/${newProd.id}`);
@@ -256,6 +320,7 @@ function MainApp() {
   const handleUpdateProductAdmin = async (updated: Product) => {
     try {
       await setDoc(doc(db, 'products', updated.id), updated);
+      setProducts((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
     } catch (err) {
       console.error(err);
       handleFirestoreError(err, OperationType.WRITE, `products/${updated.id}`);
@@ -265,6 +330,7 @@ function MainApp() {
   const handleDeleteProductAdmin = async (id: string) => {
     try {
       await deleteDoc(doc(db, 'products', id));
+      setProducts((prev) => prev.filter((p) => p.id !== id));
     } catch (err) {
       console.error(err);
       handleFirestoreError(err, OperationType.DELETE, `products/${id}`);
@@ -345,6 +411,7 @@ function MainApp() {
           onOpenWallet={() => setIsWalletModalOpen(true)}
           onOpenPlans={() => setIsPlanModalOpen(true)}
           onOpenInstallApp={() => setIsInstallModalOpen(true)}
+          onOpenQrScanner={() => setIsQrScannerModalOpen(true)}
           currentTab="admin"
           setCurrentTab={(tab) => {
             if (tab !== 'admin') {
@@ -388,6 +455,7 @@ function MainApp() {
         onOpenWallet={() => setIsWalletModalOpen(true)}
         onOpenPlans={() => setIsPlanModalOpen(true)}
         onOpenInstallApp={() => setIsInstallModalOpen(true)}
+        onOpenQrScanner={() => setIsQrScannerModalOpen(true)}
         currentTab={currentTab}
         setCurrentTab={setCurrentTab}
         isAdminRoute={false}
@@ -470,11 +538,19 @@ function MainApp() {
                         Customer Portal — Welcome, {userProfile.displayName || 'Reviewer'}!
                       </h1>
                       <p className="text-xs sm:text-sm text-slate-300 mt-1 max-w-xl">
-                        Select any marketplace product below to rate quality, delivery speed, and claim your guaranteed ₹20 reward per task.
+                        Select any marketplace product below to rate quality, delivery speed, and claim your guaranteed ₹{adminSettings.defaultRatingReward || 20} reward per task.
                       </p>
                     </div>
 
                     <div className="flex flex-wrap items-center gap-3">
+                      <button
+                        onClick={() => setIsQrScannerModalOpen(true)}
+                        className="px-4 py-3 rounded-2xl bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/30 text-emerald-300 font-bold text-xs sm:text-sm transition-all flex items-center gap-2 shadow-sm"
+                      >
+                        <QrCode className="w-4 h-4 text-emerald-400" />
+                        <span>Payment QR</span>
+                      </button>
+
                       <button
                         onClick={() => setIsWalletModalOpen(true)}
                         className="px-5 py-3 rounded-2xl bg-white/10 hover:bg-white/15 border border-white/20 text-white font-bold text-xs sm:text-sm transition-all flex items-center gap-2.5 shadow-sm"
@@ -508,7 +584,7 @@ function MainApp() {
                             Free Demo Trial: {userProfile.demoTasksCompleted || 0} of 5 Tasks Completed
                           </span>
                           <span className="text-emerald-400">
-                            ₹{(userProfile.demoTasksCompleted || 0) * 20} Earned
+                            ₹{(userProfile.demoTasksCompleted || 0) * (adminSettings.defaultRatingReward || 20)} Earned
                           </span>
                         </div>
                         <div className="w-full bg-slate-800 rounded-full h-2 overflow-hidden border border-slate-700">
@@ -520,7 +596,7 @@ function MainApp() {
                         <p className="text-[11px] text-slate-400 mt-1.5">
                           {(userProfile.demoTasksCompleted || 0) >= 5
                             ? 'You have completed all 5 demo tasks! Select a membership package to unlock unlimited daily tasks across all portals.'
-                            : `${5 - (userProfile.demoTasksCompleted || 0)} demo tasks remaining. Each rating immediately adds ₹20 to your wallet.`}
+                            : `${5 - (userProfile.demoTasksCompleted || 0)} demo tasks remaining. Each rating immediately adds ₹${adminSettings.defaultRatingReward || 20} to your wallet.`}
                         </p>
                       </div>
 
@@ -546,7 +622,7 @@ function MainApp() {
                     
                     <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-white/10 backdrop-blur-md border border-white/15 text-xs font-bold text-amber-300 mb-4 shadow-sm">
                       <Sparkles className="w-4 h-4 text-amber-300" />
-                      <span>Instant ₹20 Per Verified Product Review</span>
+                      <span>Instant ₹{adminSettings.defaultRatingReward || 20} Per Verified Product Review</span>
                     </div>
 
                     <h1 className="text-3xl sm:text-5xl font-black tracking-tight leading-tight sm:leading-tight">
@@ -556,19 +632,27 @@ function MainApp() {
                     <p className="mt-4 text-sm sm:text-base text-slate-300 leading-relaxed">
                       Test, rate, and review top trending products sourced automatically from{' '}
                       <span className="font-bold text-white">Amazon India, Flipkart, Meesho, Blinkit, Instamart &amp; Zepto</span>.
-                      Earn guaranteed ₹20 for every verified rating straight to your UPI (GPay, PhonePe, Paytm) or Bank account.
+                      Earn guaranteed ₹{adminSettings.defaultRatingReward || 20} for every verified rating straight to your UPI (GPay, PhonePe, Paytm) or Bank account.
                     </p>
 
                     <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
                       <button
                         onClick={() => {
-                          setAuthModalMessage('Sign in or register to test 5 free demo products and earn ₹100 immediately!');
+                          setAuthModalMessage(`Sign in or register to test 5 free demo products and earn ₹${5 * (adminSettings.defaultRatingReward || 20)} immediately!`);
                           setIsAuthModalOpen(true);
                         }}
                         className="px-6 py-3 rounded-xl bg-gradient-to-r from-indigo-500 to-blue-600 hover:from-indigo-600 hover:to-blue-700 text-white font-black text-sm shadow-lg shadow-indigo-500/25 transition-all flex items-center gap-2 active:scale-95"
                       >
                         <span>Start Free 5-Task Demo Trial</span>
                         <ArrowRight className="w-4 h-4" />
+                      </button>
+
+                      <button
+                        onClick={() => setIsQrScannerModalOpen(true)}
+                        className="px-5 py-3 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-black text-xs sm:text-sm shadow-md transition-all flex items-center gap-2 active:scale-95"
+                      >
+                        <QrCode className="w-4 h-4 text-slate-950" />
+                        <span>Payment QR Scanner</span>
                       </button>
 
                       <button
@@ -594,7 +678,7 @@ function MainApp() {
                         <div className="text-amber-400 font-black text-xs uppercase tracking-wider mb-1">Step 1</div>
                         <div className="text-sm font-bold text-white">5 Free Demo Tasks</div>
                         <div className="text-xs text-slate-400 mt-1">
-                          Test system on 5 real items &amp; earn ₹100 trial balance in your wallet.
+                          Test system on 5 real items &amp; earn ₹{5 * (adminSettings.defaultRatingReward || 20)} trial balance in your wallet.
                         </div>
                       </div>
 
@@ -625,11 +709,17 @@ function MainApp() {
               
               <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-6">
                 <div>
-                  <h2 className="text-2xl font-black text-slate-900 tracking-tight">
-                    Active Marketplace Products Feed ({filteredCatalog.length} Available)
-                  </h2>
+                  <div className="flex flex-wrap items-center gap-2 mb-1">
+                    <h2 className="text-2xl font-black text-slate-900 tracking-tight">
+                      Active Marketplace Products Feed ({filteredCatalog.length} Available)
+                    </h2>
+                    <span className="inline-flex items-center gap-1.5 px-3 py-0.5 rounded-full bg-emerald-50 text-emerald-800 text-xs font-bold border border-emerald-200 shadow-2xs">
+                      <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                      Cloud Database Connected
+                    </span>
+                  </div>
                   <p className="text-xs sm:text-sm text-slate-500 mt-0.5">
-                    Click any product to rate quality, delivery, and claim your guaranteed ₹20 reward.
+                    Click any product to rate quality, delivery, and claim your guaranteed ₹{adminSettings.defaultRatingReward || 20} reward.
                   </p>
                 </div>
 
@@ -744,6 +834,14 @@ function MainApp() {
         )}
 
         <button
+          onClick={() => setIsQrScannerModalOpen(true)}
+          className="flex flex-col items-center gap-0.5 text-[11px] font-bold text-emerald-600"
+        >
+          <QrCode className="w-5 h-5" />
+          <span>QR Pay</span>
+        </button>
+
+        <button
           onClick={() => setIsPlanModalOpen(true)}
           className="flex flex-col items-center gap-0.5 text-[11px] font-bold text-amber-600"
         >
@@ -754,7 +852,7 @@ function MainApp() {
         {isCustomerLoggedIn && (
           <button
             onClick={() => setIsWalletModalOpen(true)}
-            className="flex flex-col items-center gap-0.5 text-[11px] font-bold text-emerald-600"
+            className="flex flex-col items-center gap-0.5 text-[11px] font-bold text-slate-700"
           >
             <Wallet className="w-5 h-5" />
             <span>Wallet</span>
@@ -819,6 +917,16 @@ function MainApp() {
         onClose={() => setSelectedProductForReview(null)}
         onReviewSubmitted={handleReviewSubmitted}
         onOpenPlans={() => setIsPlanModalOpen(true)}
+      />
+
+      <QrScannerModal
+        isOpen={isQrScannerModalOpen}
+        onClose={() => setIsQrScannerModalOpen(false)}
+        onOpenPlanModal={() => {
+          setIsQrScannerModalOpen(false);
+          setIsPlanModalOpen(true);
+        }}
+        settings={adminSettings}
       />
 
       <PlanModal

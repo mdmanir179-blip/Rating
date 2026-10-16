@@ -44,6 +44,9 @@ export interface UserProfile {
   demoTasksCompleted: number;
   activePlan: 'none' | '3_days' | '7_days' | '1_month' | '6_months' | '1_year';
   planExpiresAt?: string;
+  assignedProductIds?: string[];
+  customTaskLimit?: number;
+  assignedNotes?: string;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -116,5 +119,6 @@ export interface AdminSettings {
   bankIfsc: string;
   accountHolderName: string;
   instructions: string;
+  defaultRatingReward?: number;
   updatedAt?: string;
 }

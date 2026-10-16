@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { SubscriptionPlan, AdminSettings, SubscriptionPayment } from '../types';
 import { SUBSCRIPTION_PLANS } from '../data/plans';
 import { useAuth } from '../context/AuthContext';
-import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { doc, getDoc, setDoc, onSnapshot } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from '../firebase';
 import { 
   X, 
@@ -15,8 +15,10 @@ import {
   Smartphone, 
   Building2, 
   AlertCircle,
-  ArrowRight
+  ArrowRight,
+  Download
 } from 'lucide-react';
+import { DEFAULT_QR_CODE_SVG } from '../utils/qrCodeHelper';
 
 interface PlanModalProps {
   isOpen: boolean;
@@ -25,7 +27,7 @@ interface PlanModalProps {
 }
 
 const DEFAULT_SETTINGS: AdminSettings = {
-  qrCodeUrl: 'https://images.unsplash.com/photo-1607604276583-eef5d076aa5f?auto=format&fit=crop&w=600&q=80',
+  qrCodeUrl: DEFAULT_QR_CODE_SVG,
   upiId: 'reviewearn.pay@okhdfcbank',
   phonePeNumber: '9876543210 (PhonePe / GPay)',
   gPayNumber: '9876543210',
@@ -51,21 +53,21 @@ export const PlanModal: React.FC<PlanModalProps> = ({ isOpen, onClose, onOpenAut
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
 
-  // Fetch admin payment settings from Firestore
+  // Real-time listener for admin payment settings & QR Code from Firestore
   useEffect(() => {
-    if (!isOpen) return;
-    const fetchSettings = async () => {
-      try {
-        const snap = await getDoc(doc(db, 'settings', 'payment_config'));
+    const unsub = onSnapshot(
+      doc(db, 'settings', 'payment_config'),
+      (snap) => {
         if (snap.exists()) {
           setSettings({ ...DEFAULT_SETTINGS, ...snap.data() } as AdminSettings);
         }
-      } catch (err) {
-        setSettings(DEFAULT_SETTINGS);
+      },
+      (err) => {
+        console.warn('Real-time payment settings notice:', err);
       }
-    };
-    fetchSettings();
-  }, [isOpen]);
+    );
+    return () => unsub();
+  }, []);
 
   if (!isOpen) return null;
 
@@ -325,20 +327,33 @@ export const PlanModal: React.FC<PlanModalProps> = ({ isOpen, onClose, onOpenAut
 
               {/* QR Scanner visual */}
               <div className="bg-white p-4 rounded-xl border border-slate-200 flex flex-col items-center justify-center text-center shadow-xs">
-                <div className="text-xs font-bold text-slate-800 mb-2 flex items-center gap-1">
-                  <QrCode className="w-4 h-4 text-indigo-600" />
-                  Scan to Pay (BHIM UPI)
+                <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-700 text-[11px] font-bold border border-emerald-200 mb-2">
+                  <QrCode className="w-3.5 h-3.5 text-emerald-600" />
+                  <span>Official Payment QR Scanner</span>
                 </div>
-                <div className="w-32 h-32 rounded-xl bg-slate-100 border border-slate-200 overflow-hidden flex items-center justify-center p-1 shadow-inner">
+                <div className="w-36 h-36 rounded-xl bg-white border border-slate-200 overflow-hidden flex items-center justify-center p-1.5 shadow-sm group relative">
                   <img
-                    src={settings.qrCodeUrl}
+                    src={settings.qrCodeUrl || DEFAULT_QR_CODE_SVG}
                     alt="BHIM UPI QR Scanner"
-                    className="w-full h-full object-cover rounded-lg"
+                    className="w-full h-full object-contain rounded-lg"
+                    onError={(e: any) => {
+                      e.currentTarget.src = DEFAULT_QR_CODE_SVG;
+                    }}
                   />
                 </div>
                 <div className="text-[10px] text-slate-500 mt-2 font-medium">
                   Scan via PhonePe, GPay, Paytm, BHIM, or Banking app
                 </div>
+                <a
+                  href={settings.qrCodeUrl || DEFAULT_QR_CODE_SVG}
+                  download="Payment_QR_Code.png"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="mt-2.5 px-3 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-[11px] font-bold transition-colors inline-flex items-center gap-1 border border-slate-200 shadow-2xs"
+                >
+                  <Download className="w-3 h-3 text-indigo-600" />
+                  <span>Save QR Image</span>
+                </a>
               </div>
 
             </div>
